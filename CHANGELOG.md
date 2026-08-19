@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0
+
+- Adds `sdk/`, the script authoring kit: the Lua API reference, two templates,
+  four worked examples, language-server annotations, the Bridge path and event
+  catalog, and the validation and packaging tools. Released as
+  `CRANE-Script-SDK-2.0.0.zip`.
+- Builds and validates the SDK on every push, and attaches its archive to each
+  release.
+- No change to `DLTBRuntimeCrane.asi` or `CraneManager.exe` behaviour. Both
+  report 2.1.0 so a log identifies which build is installed.
+
 ## 2.0.0
 
 First release under the DLTBRuntimeCrane name, continuing LuaHost 1.0.x.

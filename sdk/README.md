@@ -31,7 +31,7 @@ CRANE, DLTBRuntimeBridge, an ASI loader, CRANE configuration or another author's
 
 - SDK: 2.0.0
 - Target CRANE Lua API: 2.0.0
-- Requires: CRANE 2.0.0 and DLTBRuntimeBridge 3.0.3 or newer
+- Requires: CRANE 2.0.0 or newer, and DLTBRuntimeBridge 3.0.3 or newer
 - Catalog source: DLTBRuntimeBridge ABI 3, released 3.0.3, for game 1.6.4
 - Lua language: 5.4, with only base, table, string, math and UTF-8 libraries exposed
 

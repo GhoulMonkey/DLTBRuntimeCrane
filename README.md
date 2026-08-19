@@ -30,7 +30,7 @@ DLTBRuntimeCrane does nothing on its own. It requires DLTBRuntimeBridge
 
 ## What is here
 
-The source for the two binaries in the download:
+The source for the two binaries in the download, and the authoring kit:
 
 | | |
 |---|---|
@@ -53,7 +53,7 @@ targeting `x86_64-w64-mingw32`, Python 3, and bash (Git Bash is sufficient).
 
 ```sh
 cd asi
-CLANG=/c/llvm-mingw/bin/x86_64-w64-mingw32-clang.exe ./build-asi.sh DLTBRuntimeCrane-2.0.0.asi
+CLANG=/c/llvm-mingw/bin/x86_64-w64-mingw32-clang.exe ./build-asi.sh DLTBRuntimeCrane-2.1.0.asi
 ```
 
 Omit `CLANG=` if the compiler is on `PATH`. The build runs a gate asserting the
