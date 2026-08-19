@@ -9,10 +9,10 @@
  * actually double-clicks was not covered at all. The icon was only what
  * exposed the gap.
  *
- * --selftest constructs MainWindow and exits without showing it. Constructing is
- * the whole point: InitializeComponent resolves every resource URI, style key and
- * converter reference in the XAML, so "compiles, then dies on launch" becomes a
- * build failure instead of a user report.
+ * --selftest constructs MainWindow and exits without showing it. Constructing it
+ * is what matters: InitializeComponent resolves every resource URI, style key
+ * and converter reference in the XAML, so "compiles, then dies on launch"
+ * becomes a build failure instead of a user report.
  */
 
 using System;

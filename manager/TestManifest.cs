@@ -652,7 +652,7 @@ internal static class TestManifest
             ParamDecl plain = ScriptHeader.Find(declared, "plain");
             Check(plain != null && plain.Group == "", "an ungrouped parameter has an empty group");
 
-            // The whole point of tracking quoting in Tokenize.
+            // Why Tokenize tracks quoting.
             ParamDecl bare = ScriptHeader.Find(declared, "bare");
             Check(bare != null && bare.Desc == "Speeds looting up considerably",
                   "an unquoted desc keeps every word");

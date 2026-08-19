@@ -1571,8 +1571,8 @@ namespace CraneManager
              * The description leads because it answers "what is this", which is
              * the question somebody has before "what will it accept". The range
              * follows in parentheses, and on its own when there is no
-             * description -- which is exactly what this line used to be, so
-             * scripts that declare no desc= look unchanged.
+             * description, which is what this line used to be, so scripts that
+             * declare no desc= look unchanged.
              */
             string hint = decl.Desc;
             if (range.Length > 0)
