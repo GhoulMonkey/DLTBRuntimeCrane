@@ -23,7 +23,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Requirements
 
-DLTBRuntimeCrane does nothing on its own. It requires DLTBRuntimeBridge
+DLTBRuntimeCrane requires DLTBRuntimeBridge
 3.0.3-dev.2 or newer, which provides the ASI loader and the ABI 3 runtime:
 
 <https://www.nexusmods.com/dyinglightthebeast/mods/969>
