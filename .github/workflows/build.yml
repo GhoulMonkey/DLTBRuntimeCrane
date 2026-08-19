@@ -67,16 +67,16 @@ jobs:
           Write-Host "SDK validation passed"
           exit 0
 
-      # Same script the SDK archive is cut with locally, so the download an
-      # author gets from a release is the one the gates above just ran against.
-      - name: Package the SDK
+      # Runs for its gates, which the validation step above does not cover: the
+      # registered Lua surface has to match the annotations call for call. The
+      # archive it produces stays out of dist/, because a release ships one
+      # download and the SDK travels in the repository.
+      - name: Check the SDK archive builds
         shell: pwsh
         working-directory: sdk
         run: |
           $ErrorActionPreference = 'Stop'
           & ./build-sdk.ps1
-          New-Item -ItemType Directory -Force -Path ../dist | Out-Null
-          Copy-Item package/*.zip ../dist/
           exit 0
 
       # Packaged by the project's own script, so the archive has the same layout
@@ -91,7 +91,8 @@ jobs:
             asi/DLTBRuntimeCrane.asi \
             manager/bin/Release/CraneManager.exe \
             asi/vendor/LICENSE.txt \
-            layout/ph_ft/work/bin/x64/scripts/quick_hands.lua
+            layout/ph_ft/work/bin/x64/scripts/quick_hands.lua \
+            sdk
           cd dist && sha256sum * | tee SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
@@ -106,8 +107,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The notes are this version's CHANGELOG.md section, so the release
-          # says what changed. Provenance goes underneath, where it belongs.
+          # The notes are this version's CHANGELOG.md section and nothing else.
           awk -v v="## $GITHUB_REF_NAME" '
             $0 == v {found = 1; next}
             found && /^## / {exit}
@@ -117,9 +117,6 @@ jobs:
             echo "no CHANGELOG.md section for $GITHUB_REF_NAME" >&2
             exit 1
           fi
-          printf '\n---\n\n%s\n' \
-            "Built from source by GitHub Actions. The archive has the same layout as the Nexus Mods download and installs the same way, but is not byte-identical to it: the linker records the build path, so the same source compiled on another machine produces different binaries. Checksums for this build are in SHA256SUMS.txt." \
-            >> notes.md
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "DLTBRuntimeCrane $GITHUB_REF_NAME" \
             --notes-file notes.md

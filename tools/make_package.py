@@ -4,18 +4,29 @@ Split out of the shell packaging script, which embedded it in a heredoc. A
 heredoc silently eats one level of escaping, and a build script that runs on
 every release is a poor place for a latent quoting bug.
 
-Usage: make_package.py <zip> <asi> <manager-exe> <lua-license> <script>
+Usage: make_package.py <zip> <asi> <manager-exe> <lua-license> <script> [sdk-dir]
 
 The archive carries only files nothing ever writes to. DLTBRuntimeCrane.ini,
 DLTBRuntimeCrane.manifest.json and scripts\\*.lua are created by CraneManager on
 first run rather than packaged, so a mod manager never owns a user's script list
 or tuned parameters.
+
+An sdk-dir is added under ph_ft/sdk/, so the release is one download for players
+and script authors alike. Those files are inert: nothing loads them, and they sit
+beside CraneManager rather than in the game root.
 """
 
+import pathlib
 import sys
 import zipfile
 
 BASE = "ph_ft/work/bin/x64/"
+
+# Everything the SDK folder holds except its own build outputs. A built archive
+# inside an archive helps nobody, and the checker is wanted -- it is what
+# validate.ps1 runs.
+SDK_BASE = "ph_ft/sdk/"
+SDK_SKIP_DIRS = {"package"}
 
 # CraneManager deploys to ph_ft, NOT beside the ASI.
 #
@@ -31,8 +42,26 @@ BASE = "ph_ft/work/bin/x64/"
 MANAGER_BASE = "ph_ft/"
 
 
+def sdk_payload(sdk_dir):
+    """Every SDK file, sorted, so two builds of one tree produce one archive."""
+    root = pathlib.Path(sdk_dir)
+    if not root.is_dir():
+        print("sdk directory not found: %s" % sdk_dir, file=sys.stderr)
+        sys.exit(2)
+    out = []
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if not path.is_file() or SDK_SKIP_DIRS & set(relative.parts):
+            continue
+        out.append((str(path), SDK_BASE + str(relative).replace("\\", "/")))
+    if not out:
+        print("sdk directory is empty: %s" % sdk_dir, file=sys.stderr)
+        sys.exit(2)
+    return out
+
+
 def main(argv):
-    if len(argv) != 6:
+    if len(argv) not in (6, 7):
         print(__doc__.strip(), file=sys.stderr)
         return 2
 
@@ -47,6 +76,8 @@ def main(argv):
         # changes, while their tuned VALUES survive in the generated manifest.
         (script, BASE + "scripts/quick_hands.lua"),
     ]
+    if len(argv) == 7:
+        payload += sdk_payload(argv[6])
 
     with zipfile.ZipFile(zip_path, "w") as archive:
         for source, arcname in payload:
