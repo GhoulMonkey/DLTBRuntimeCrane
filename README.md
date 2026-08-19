@@ -32,10 +32,15 @@ published, so it can be diffed against the release from lua.org.
 ## Requirements
 
 CRANE does nothing on its own. It requires DLTBRuntimeBridge 3.0.3-dev.2 or
-newer, which provides the ASI loader and the ABI 3 runtime, and is a separate
-download.
+newer, which provides the ASI loader and the ABI 3 runtime:
+
+<https://www.nexusmods.com/dyinglightthebeast/mods/969>
 
 ## Downloads
 
-The built mod is on Nexus Mods. This repository exists so the code can be read
-and the binaries rebuilt by anyone who wants to.
+The built mod is on Nexus Mods:
+
+<https://www.nexusmods.com/dyinglightthebeast/mods/973>
+
+This repository exists so the code can be read and the binaries rebuilt by
+anyone who wants to.
