@@ -1,3 +1,39 @@
+/*
+ * Crane manifest reader -- DLTBRuntimeCrane.manifest.json.
+ *
+ * Split out of Crane.c so it can be exercised offline by
+ * tools\test_manifest.c without a Bridge, a game, or a Lua state. It is the
+ * one piece of Crane that parses user-editable input by hand, which makes
+ * it the piece most worth testing rather than inspecting.
+ *
+ * It has no globals, does no logging and touches no Win32: text in, entries
+ * or an error string out. The caller decides what to do about a failure.
+ *
+ * A strict reader for one fixed shape, rather than a general JSON parser:
+ *
+ *   {
+ *     "version": 1,
+ *     "scripts": [
+ *       { "file": "a.lua", "enabled": true,
+ *         "params": { "speed": 1.5, "loud": false, "mode": "fast" } }
+ *     ]
+ *   }
+ *
+ * The schema is small and fixed, so a reader that accepts exactly it and
+ * refuses everything else is both smaller and easier to reason about than a
+ * general one -- and this file is user-editable input, which is the case where
+ * "accepts more than it should" turns into a bug report.
+ *
+ * `params` is the one nested object, and it is bounded hard: keys and values
+ * are length-capped, the count is capped, values may only be a number, a
+ * boolean or a string, and nothing nests inside them. Parameters were the
+ * feature that expanded this parser at all; those limits are what keep the
+ * expansion from being open-ended.
+ *
+ * Failures carry the line and what was expected. A bare "manifest invalid"
+ * would be the defect here: a syntax error, a missing "file" key and a
+ * duplicate entry are three different fixes.
+ */
 #ifndef CRANE_MANIFEST_PARSE_H
 #define CRANE_MANIFEST_PARSE_H
 
@@ -115,6 +151,9 @@ static int manifest_bool(manifest_reader *r, int *out) {
     return 0;
 }
 
+/* Reads a number and hands back its value, rather than skipping past it:
+   parameter values are numbers the script will act on, so they have to survive
+   parsing rather than merely be stepped over. */
 static int manifest_number(manifest_reader *r, double *out) {
     char buffer[64];
     size_t used = 0;
@@ -134,6 +173,11 @@ static int manifest_number(manifest_reader *r, double *out) {
     return 1;
 }
 
+/*
+ * Scripts must be plain file names inside scripts\. The manifest is written by
+ * a tool and editable by hand, so a traversal or absolute path is rejected
+ * rather than trusted.
+ */
 static int manifest_valid_name(const char *name) {
     size_t i;
     if (!name[0]) return 0;
@@ -155,6 +199,7 @@ static int manifest_same_name(const char *a, const char *b) {
     return a[i] == b[i];
 }
 
+/* One "params" object: flat, bounded, and three value types only. */
 static int manifest_params(manifest_reader *r, manifest_entry *entry) {
     if (!manifest_expect(r, '{')) return 0;
     if (manifest_peek(r, '}')) return manifest_expect(r, '}');
@@ -197,6 +242,9 @@ static int manifest_params(manifest_reader *r, manifest_entry *entry) {
     return manifest_expect(r, '}');
 }
 
+/* Returns 1 on success. On failure `out->error` says which line and what,
+   and `out->count` is 0 -- a broken manifest runs nothing rather than
+   running the prefix it managed to parse. */
 static int manifest_parse(const char *text, size_t length, manifest_result *out) {
     manifest_reader reader;
     unsigned count = 0;
@@ -266,6 +314,8 @@ static int manifest_parse(const char *text, size_t length, manifest_result *out)
     } while (manifest_take(&reader, ','));
     if (!manifest_expect(&reader, '}')) goto failed;
 
+    /* Trailing content is a mistake worth naming: it usually means a second
+       object was pasted after the first. */
     manifest_skip_ws(&reader);
     if (reader.p != reader.end) {
         manifest_fail(&reader, "unexpected content after the closing '}'");
@@ -282,4 +332,4 @@ failed:
     return 0;
 }
 
-#endif
+#endif /* CRANE_MANIFEST_PARSE_H */

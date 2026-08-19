@@ -1,6 +1,34 @@
 #ifndef DLTB_RUNTIME_BRIDGE_CLIENT_KIT_H
 #define DLTB_RUNTIME_BRIDGE_CLIENT_KIT_H
 
+/*
+ * Client-side conveniences for ABI-3 Bridge clients. Header-only, address-free.
+ *
+ * This exists because the third client was about to copy the same ~200 lines
+ * from the second: the lease-parameter layer, the session-playable gate, the
+ * Bridge-owned logging wrappers, the LogLevel INI reader and the debounced INI
+ * reload. Per-client copies of shared machinery are how the vendored-header
+ * drift in an earlier client happened (620 diff lines, four API versions
+ * behind, nothing warning) -- so the machinery lives beside the API header it
+ * depends on, versioned with it, and a client includes rather than copies.
+ *
+ * What belongs here: patterns every client repeats, expressed only through the
+ * public ABI. What does not: anything with a game address, which is the
+ * Bridge's side of the line, and anything one client wants, which is that
+ * client's own code.
+ *
+ * Everything is `static inline`, so unused helpers cost nothing and compile
+ * clean under -Wall -Wextra -Werror.
+ *
+ * Current ABI-3 clients share this machinery rather than carrying independent
+ * lifecycle implementations that can drift from the public scope contract.
+ *
+ * Logging discipline is baked in: INFO is for meaningful state transitions,
+ * and a client waiting on a prerequisite is not an error state, so the session
+ * gate says "waiting" at DEBUG, once, and nothing is claimed or read before
+ * the session is playable.
+ */
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdarg.h>
@@ -11,13 +39,24 @@
 
 #include "DLTBRuntimeBridgeAPI3.h"
 
+/* Keep build identity machine-readable without putting release bookkeeping in
+   the player console. Package gates scan this exported metadata to reject a
+   stale binary while the Bridge owns the timeless startup presentation. */
 #define DLTBCK_EMBED_BUILD_VERSION(version_literal) \
     __declspec(dllexport) const char DLTBClientBuildVersion[] = version_literal
+
+/* ------------------------------------------------------------------------- */
+/* Context                                                                    */
+/* ------------------------------------------------------------------------- */
 
 typedef struct dltbck_context {
     const dltb_api *api;
     dltb_client client;
 } dltbck_context;
+
+/* ------------------------------------------------------------------------- */
+/* Engine-scoped client shutdown                                              */
+/* ------------------------------------------------------------------------- */
 
 typedef struct dltbck_unregister_request {
     const dltb_api *api;
@@ -33,6 +72,20 @@ static __inline void dltbck_unregister_on_update(dltb_scope scope,
     HeapFree(GetProcessHeap(), 0, request);
 }
 
+/*
+ * Request unregister without lying about completion.
+ *
+ * unregister_client restores engine-facing holdings and therefore accepts
+ * UPDATE/DETOUR only. Most clients notice shutdown or startup failure on their
+ * own worker. From there this helper queues one copied request and returns the
+ * schedule result; DLTB_OK means requested, not already completed. If already
+ * in engine scope it completes synchronously.
+ *
+ * The request owns no caller context and frees itself after delivery. If the
+ * process is already tearing down and UPDATE never arrives, normal Bridge
+ * process cleanup remains the final safety net; calling an engine restore from
+ * the worker would be the unsafe alternative, not a stronger cleanup.
+ */
 static __inline dltb_status dltbck_request_unregister(
     const dltbck_context *ctx) {
     dltbck_unregister_request *request;
@@ -57,6 +110,10 @@ static __inline dltb_status dltbck_request_unregister(
     return status;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Logging through the Bridge                                                 */
+/* ------------------------------------------------------------------------- */
+
 static __inline void dltbck_say(const dltbck_context *ctx,
                                 dltb_log_class line_class,
                                 const char *message) {
@@ -75,6 +132,9 @@ static __inline void dltbck_sayf(const dltbck_context *ctx,
     dltbck_say(ctx, line_class, message);
 }
 
+/* Report the client's one successful startup transition. The client supplies
+   only what became available; the Bridge owns `loaded;`, INFO classification,
+   attribution and console presentation for the whole platform. */
 static __inline dltb_status dltbck_report_loaded(
     const dltbck_context *ctx, const char *summary) {
     dltb_status status;
@@ -90,6 +150,14 @@ static __inline dltb_status dltbck_report_loaded(
     return status;
 }
 
+/*
+ * LogLevel from a client's own INI, name or number.
+ *
+ * The ABI-3 names and the legacy spellings every 1.x-era INI shipped with are
+ * both accepted, so nobody's existing file changes meaning. The level reaches
+ * the Bridge only through set_level -- a client that never calls it follows the
+ * Bridge's level, which is not the same as honouring its own INI.
+ */
 static __inline int dltbck_read_log_level(const wchar_t *ini_path,
                                           const wchar_t *section,
                                           const wchar_t *key) {
@@ -121,8 +189,25 @@ static __inline void dltbck_apply_log_level(const dltbck_context *ctx,
         ctx->api->log->set_level(ctx->client, (dltb_log_level)level);
 }
 
+/* ------------------------------------------------------------------------- */
+/* The session gate                                                           */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Everything waits for `session.playable`, quietly.
+ *
+ * Hunger and player ticks arrive during loading, before engine state resolves.
+ * A client acting on them reports failures whose entire cause is that the game
+ * is not ready yet -- the startup that reads as a mod failing three times and
+ * mysteriously recovering. Gate on this at the top of every handler; before
+ * playable, claim nothing, read nothing, say nothing above DEBUG.
+ *
+ * `on_leave` (optional) runs when a playable session ends, which is where a
+ * client releases its leases so the next session starts from claims rather
+ * than stale holds.
+ */
 typedef struct dltbck_session_gate {
-    int was_playable;
+    int was_playable; /* -1 until first observation */
 } dltbck_session_gate;
 
 #define DLTBCK_SESSION_GATE_INIT {-1}
@@ -150,6 +235,13 @@ static __inline int dltbck_session_playable(const dltbck_context *ctx,
     return playable;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Event payloads                                                             */
+/* ------------------------------------------------------------------------- */
+
+/* Payload fields are matched by name: the catalog owns the names
+   and the raiser supplies only values, so an index would bind the client to
+   the order of a table it does not control. */
 static __inline int dltbck_payload_f32(const dltb_event *event,
                                        const char *name, float *out) {
     uint32_t index;
@@ -190,6 +282,14 @@ static __inline int dltbck_payload_i32(const dltb_event *event,
     return 0;
 }
 
+/* Generic postcondition for any catalogued event carrying count_before and
+   count_after.  In particular, item.use.completed describes the native
+   controller lifecycle: completion with an unchanged count is not proof that
+   the item's effect occurred, and the callback may precede the enclosing
+   player activity's return to calm.  Keeping that distinction here prevents
+   every native-use client from rediscovering it as a game-mode or safe-zone
+   bug.  A guarded recovery retains the attempt and revalidates on a later
+   engine update; it must not replay synchronously from the callback. */
 typedef enum dltbck_item_count_change {
     DLTBCK_ITEM_COUNT_UNKNOWN = 0,
     DLTBCK_ITEM_COUNT_UNCHANGED = 1,
@@ -213,6 +313,15 @@ dltbck_item_count_change_from_event(const dltb_event *event,
     return DLTBCK_ITEM_COUNT_UNCHANGED;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Debounced INI reload                                                       */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Watches the file's own mtime with a settle window, so a half-saved file is
+ * never read. Poll from a handler or a worker loop; when it returns 1, reload
+ * and reapply -- including set_level, which is not sticky.
+ */
 typedef struct dltbck_ini_watch {
     FILETIME write_time;
     FILETIME pending_write_time;
@@ -268,6 +377,22 @@ static __inline int dltbck_ini_changed(dltbck_ini_watch *watch,
     return 1;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Parameters as leases                                                       */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * One held lease per parameter, claim-once/write-many.
+ *
+ * The baseline is captured by the claim -- it is the game's own value, and it
+ * is what the Bridge restores. Session-aware clients release on_leave. A
+ * client that carries a lease across subject replacement must use
+ * dltbck_refresh_baseline after DLTB_STALE_SUBJECT, recompute, then write.
+ *
+ * `refused` is the feature-disable latch: after a refusal the parameter stops
+ * being retried, so one refused path cannot spam the log sixty times a second.
+ * Clear it on config reload -- the user's "try again".
+ */
 typedef struct dltbck_param {
     const char *path;
     dltb_lease lease;
@@ -336,6 +461,8 @@ static __inline int dltbck_write_value(const dltbck_context *ctx,
     return 1;
 }
 
+/* Write an f32 unless it has barely moved; `step` is in the value's own units
+   and zero writes every time. */
 static __inline int dltbck_write(const dltbck_context *ctx,
                                  dltbck_param *param, float value,
                                  float step) {
@@ -381,6 +508,13 @@ static __inline void dltbck_refuse(const dltbck_context *ctx,
     param->refused = 1;
 }
 
+/*
+ * All-or-none claims, for features whose parameters only mean something
+ * together. A feature holding three of its four parameters is not a degraded
+ * version of that feature; it is a different and unintended one. Parameters
+ * that are independent of one another -- per-class damage, say -- do not go
+ * through a group.
+ */
 static __inline int dltbck_claim_group(const dltbck_context *ctx,
                                        dltbck_param **group, size_t count) {
     size_t index;
@@ -398,4 +532,4 @@ static __inline void dltbck_release_group(const dltbck_context *ctx,
     for (index = 0; index < count; ++index) dltbck_release(ctx, group[index]);
 }
 
-#endif
+#endif /* DLTB_RUNTIME_BRIDGE_CLIENT_KIT_H */

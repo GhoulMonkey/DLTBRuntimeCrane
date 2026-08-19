@@ -1,3 +1,5 @@
+-- Copy this into scripts/startup.lua, or merge its subscription into it.
+-- The event may arrive every update, so log only a real energy change.
 local last_energy = nil
 
 bridge.on("flashlight.updated", 2, function(event)

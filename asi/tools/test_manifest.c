@@ -1,3 +1,16 @@
+/*
+ * Offline tests for the Crane manifest reader.
+ *
+ * The manifest is the one place Crane parses user-editable input by hand, so
+ * it is tested rather than inspected. No Bridge, no game, no Lua state: the
+ * parser carries no globals and no Win32, so this runs on any build machine,
+ * and it is wired into build.ps1 ahead of the ASI link.
+ *
+ * Cases are grouped by what a failure would cost. The accept cases protect
+ * ordinary use; the reject cases protect the two properties that matter --
+ * that a broken manifest runs nothing at all rather than a half-parsed prefix,
+ * and that a "file" entry can never escape scripts\.
+ */
 #include <stdio.h>
 #include <string.h>
 
@@ -32,7 +45,7 @@ static void rejects(const char *label, const char *text) {
     check(!ok, "should be refused");
     if (ok) return;
     check(out.error[0] != '\0', "carries a reason");
-
+    /* A refusal must run nothing at all, not the prefix it managed to read. */
     check(out.count == 0, "loads no scripts on failure");
     printf("    -> %s\n", out.error);
 }
@@ -59,12 +72,18 @@ int main(void) {
     rejects("unterminated string", "{\"scripts\":[{\"file\":\"a.lua}]}");
     rejects("version is not a number", "{\"version\":\"one\",\"scripts\":[]}");
 
+    /* Path containment. These are the cases where accepting too much would let
+       an edited manifest reach outside scripts\. */
     rejects("parent traversal", "{\"scripts\":[{\"file\":\"..\\\\evil.lua\"}]}");
     rejects("subdirectory", "{\"scripts\":[{\"file\":\"sub/evil.lua\"}]}");
     rejects("backslash path", "{\"scripts\":[{\"file\":\"sub\\\\evil.lua\"}]}");
     rejects("absolute path", "{\"scripts\":[{\"file\":\"C:\\\\evil.lua\"}]}");
     rejects("empty name", "{\"scripts\":[{\"file\":\"\"}]}");
 
+    /* ---- parameters ----------------------------------------------------
+       The one nested object in the schema, and the reason this parser grew at
+       all. Bounds are asserted here rather than trusted, since every one of
+       them is reachable from a hand-edited file. */
     printf("\nparameters\n");
     accepts("empty params", "{\"scripts\":[{\"file\":\"a.lua\",\"params\":{}}]}", 1);
     accepts("three value types",
@@ -80,6 +99,8 @@ int main(void) {
     rejects("param missing value", "{\"scripts\":[{\"file\":\"a.lua\",\"params\":{\"a\":}}]}");
     rejects("param not an object", "{\"scripts\":[{\"file\":\"a.lua\",\"params\":5}]}");
 
+    /* Values must survive parsing: a number the script acts on is useless if
+       the reader only stepped past it. */
     printf("values survive\n");
     {
         manifest_result parsed;
@@ -98,6 +119,8 @@ int main(void) {
         check(strcmp(parsed.entries[0].params[0].key, "speed") == 0, "key is preserved");
     }
 
+    /* The ceiling is reachable from an edited file, so it must refuse rather
+       than overflow. */
     printf("parameter ceiling\n");
     {
         char big[4096];
@@ -109,6 +132,7 @@ int main(void) {
         rejects("one parameter over the ceiling", big);
     }
 
+    /* A failure must not leave stale entries visible to the caller. */
     printf("state after failure\n");
     manifest_parse("{\"scripts\":[{\"file\":\"a.lua\"},{\"file\":\"a.lua\"}]}",
                    47, &out);

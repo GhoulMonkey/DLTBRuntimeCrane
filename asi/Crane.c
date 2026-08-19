@@ -1,3 +1,30 @@
+/*
+ * Crane -- optional Lua 5.4 developer client for DLTBRuntimeBridge ABI 3.
+ *
+ * This ASI owns no game address, hook or game-memory access.
+ * Lua can touch the game only through the same typed, scoped ABI available to
+ * native clients.  Commands and watched scripts run in the Bridge update
+ * phase; event callbacks run in their declared Bridge delivery scope.
+ *
+ * 2.0.0 turns the single-script console into a small mod platform:
+ *   - DLTBRuntimeCrane.manifest.json declares an ordered, individually enableable list
+ *     of scripts instead of one startup.lua;
+ *   - every subscription, lease and modifier is owned by the script that
+ *     created it, and is released when that script reloads or is disabled;
+ *   - writes exist, and are refused unless DLTBRuntimeCrane.ini opts in.
+ *
+ * Design notes for the parts that are not obvious:
+ *
+ * Handles are integers rather than userdata with a __gc finaliser.  A finaliser
+ * runs at a time and in a scope the garbage collector chooses, and releasing a
+ * Bridge lease from an arbitrary scope is the unverifiable mutation this client
+ * is built to avoid.  Explicit release plus owner-driven cleanup keeps every
+ * Bridge lifetime edge on a known thread in a known scope.
+ *
+ * The new operations are probed with DLTB_API3_DOMAIN_HAS at call time rather
+ * than demanded in manifest.requires.  Writes are off by default, so a Bridge
+ * without leases must still load a read-only Crane rather than refusing it.
+ */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdarg.h>
@@ -20,16 +47,34 @@
 #define CRANE_MAX_SUBSCRIPTIONS 96
 #define CRANE_MAX_SCRIPTS 64
 #define CRANE_MAX_LEASES 64
-
+/* Long enough for the longest state path the catalog exposes, with room. */
 #define CRANE_MAX_PATH 128
 #define CRANE_MAX_MODIFIERS 64
 #define CRANE_MAX_NAME 128
 #define CRANE_MAX_MANIFEST (256u * 1024u)
-
+/*
+ * Enumeration ceiling, in whole dltb_path_info records.
+ *
+ * Chosen to exceed the largest single family the Bridge currently publishes
+ * (var.*, 3111 members) so an unfiltered listing of it is complete rather than
+ * quietly clipped. The buffer is malloc'd for the duration of the call, not
+ * taken from the Lua allocator, so it does not compete with the 2 MiB script
+ * budget. A listing that still overflows returns the true total alongside the
+ * names and logs the shortfall.
+ */
 #define CRANE_MAX_LIST 4096u
 
+/* Owner id for anything claimed from the named pipe rather than by a script.
+   Console-owned handles survive a script reload; they are released only at
+   shutdown. */
 #define CRANE_OWNER_CONSOLE (-1)
 
+/*
+ * read_manifest copies parsed entries straight into g_scripts, so the parser's
+ * ceilings must not exceed this file's. Checked here rather than trusted:
+ * raising one of the four constants alone would be a buffer overflow reachable
+ * from an edited manifest, and it would compile silently.
+ */
 _Static_assert(CRANE_MANIFEST_MAX_SCRIPTS <= CRANE_MAX_SCRIPTS,
                "manifest script ceiling exceeds g_scripts capacity");
 _Static_assert(CRANE_MANIFEST_MAX_NAME <= CRANE_MAX_NAME,
@@ -52,7 +97,14 @@ typedef struct lua_host_lease {
     int owner;
     dltb_type type;
     dltb_lease lease;
-
+    /*
+     * The path, kept so a claim can be checked against the ones already held.
+     *
+     * The Bridge enforces exclusivity per CLIENT, and every script here runs
+     * under one client handle, so from the Bridge's side two scripts claiming
+     * one path look like the same owner claiming twice and both succeed. Per
+     * SCRIPT exclusivity is Crane's job, and this is what makes it possible.
+     */
     char path[CRANE_MAX_PATH];
 } lua_host_lease;
 
@@ -63,11 +115,19 @@ typedef struct lua_host_modifier {
     dltb_modifier modifier;
 } lua_host_modifier;
 
+/*
+ * What happened to a script on the last reload.
+ *
+ * Written out for CraneManager, which otherwise has no way to know: the manager
+ * writes the manifest and this host reads it, and until now nothing flowed back.
+ * Without it a script shows as ticked in the manager whether it ran or failed
+ * on line 47.
+ */
 typedef enum crane_script_state {
-    CRANE_STATE_DISABLED = 0,
-    CRANE_STATE_LOADED = 1,
-    CRANE_STATE_MISSING = 2,
-    CRANE_STATE_FAILED = 3
+    CRANE_STATE_DISABLED = 0,   /* listed, but switched off */
+    CRANE_STATE_LOADED = 1,     /* ran to completion */
+    CRANE_STATE_MISSING = 2,    /* listed but not in scripts\ */
+    CRANE_STATE_FAILED = 3      /* syntax error, runtime error, budget stop */
 } crane_script_state;
 
 typedef struct lua_host_script {
@@ -80,6 +140,9 @@ typedef struct lua_host_script {
     unsigned param_count;
 } lua_host_script;
 
+/* g_scripts mirrors the parser's parameter array verbatim, so the two must not
+   drift apart -- same reasoning as the ceilings above, and it has to sit here
+   rather than with them because it names a type declared in this file. */
 _Static_assert(sizeof(((lua_host_script *)0)->params) ==
                sizeof(((manifest_entry *)0)->params),
                "script parameter storage does not match the parser's");
@@ -100,7 +163,7 @@ static lua_host_script g_scripts[CRANE_MAX_SCRIPTS];
 static unsigned g_script_count;
 static int g_current_owner = CRANE_OWNER_CONSOLE;
 static int g_allow_writes;
-static int g_writes_state_announced;
+static int g_writes_state_announced;   /* so an unchanged state is not re-announced */
 static wchar_t g_module_dir[MAX_PATH];
 static wchar_t g_manifest_path[MAX_PATH];
 static wchar_t g_status_path[MAX_PATH];
@@ -144,11 +207,20 @@ static void *host_alloc(void *ud, void *ptr, size_t old_size, size_t new_size) {
 
 static void instruction_limit(lua_State *L, lua_Debug *ar) {
     (void)ar;
-
+    /*
+     * %d, not %u. Lua's own formatter accepts %d, %s, %f, %p, %c, %U and %%, and
+     * nothing else; %u made it raise "invalid option '%u' to 'lua_pushfstring'"
+     * instead of saying what happened. Containment worked and reported itself as
+     * a formatting bug, which is the kind of error that gets read as the mod
+     * being broken.
+     */
     luaL_error(L, "instruction budget exceeded (%d); callback stopped",
                (int)CRANE_INSTRUCTION_BUDGET);
 }
 
+/* `detail`, when given, receives the Lua error text. The log has always carried
+   it; the status file needs it too, and re-deriving it from the log would mean
+   parsing our own prose. */
 static int protected_call_detail(int nargs, int nresults, const char *where,
                                  char *detail, size_t detail_bytes) {
     int status;
@@ -175,12 +247,24 @@ static void push_status_error(dltb_status status) {
     lua_pushstring(g_lua, dltb_status_text(status));
 }
 
+/* Name of the script that owns `owner`, for log lines. Console-owned work says
+   so rather than pretending to be a script. */
 static const char *owner_name(int owner) {
     if (owner == CRANE_OWNER_CONSOLE) return "<console>";
     if (owner < 0 || (unsigned)owner >= g_script_count) return "<unknown>";
     return g_scripts[owner].file;
 }
 
+/* ------------------------------------------------------------------ */
+/* Settings                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * DLTBRuntimeCrane.ini is new in 2.0.0 -- 1.0.2 shipped no INI at all. Absent file
+ * means every default, which is the read-only 1.0.2 behaviour.
+ */
+/* Returns 1 when the write permission changed, which the caller must act on --
+   see apply_settings_change. */
 static int read_settings(void) {
     UINT allow = GetPrivateProfileIntW(L"Crane", L"AllowWrites", 0, g_ini_path);
     UINT level = GetPrivateProfileIntW(L"Crane", L"LogLevel", 0, g_ini_path);
@@ -193,7 +277,16 @@ static int read_settings(void) {
         host_log(DLTB_LOG_CLASS_WARN,
                  "LogLevel=%u is out of range (1-3); keeping the Bridge's level",
                  level);
-
+    /*
+     * Announced when the permission changes, rather than on every read.
+     *
+     * A raised bound has to announce itself, so a switch left on from a test
+     * session cannot masquerade as normal behaviour later. But this runs on
+     * every INI reload: repeating an unchanged state at INFO on each one made
+     * the line easy to ignore, through startup and again at every session
+     * transition. The first evaluation still announces, since that is a change
+     * from "nothing said yet".
+     */
     if (g_allow_writes != previous || !g_writes_state_announced) {
         g_writes_state_announced = 1;
         if (g_allow_writes)
@@ -214,6 +307,15 @@ static int require_writes(lua_State *L) {
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Manifest                                                            */
+/* ------------------------------------------------------------------ */
+
+
+/*
+ * Reads the manifest, or falls back to the 1.0.2 layout when there is none so
+ * an upgrade does not silently stop running an existing startup.lua.
+ */
 static void read_manifest(void) {
     HANDLE file;
     DWORD size, read = 0;
@@ -258,6 +360,10 @@ static void read_manifest(void) {
     CloseHandle(file);
     text[read] = '\0';
     {
+        /* Static rather than automatic. With parameters a manifest_result is
+           well over a hundred kilobytes, which is more stack than a worker
+           thread should be asked for. Safe as one instance: read_manifest only
+           runs inside the update phase, under g_lock. */
         static manifest_result parsed;
         if (manifest_parse(text, read, &parsed)) {
             unsigned i;
@@ -272,6 +378,8 @@ static void read_manifest(void) {
             g_script_count = parsed.count;
             host_log(DLTB_LOG_CLASS_DEBUG, "manifest lists %u script(s)", g_script_count);
         } else {
+            /* Name the line and the reason: a bare "manifest invalid" leaves
+               three different fixes indistinguishable. */
             host_log(DLTB_LOG_CLASS_ERROR, "DLTBRuntimeCrane.manifest.json: %s", parsed.error);
             host_log(DLTB_LOG_CLASS_ERROR,
                      "no scripts were loaded; fix the manifest and save it to retry");
@@ -281,6 +389,16 @@ static void read_manifest(void) {
     free(text);
 }
 
+/* ------------------------------------------------------------------ */
+/* Ownership                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Release everything a script owns. This is what makes hot reload safe once
+ * scripts can write: a lease the old copy claimed is restored by the Bridge
+ * before the new copy runs, rather than being inherited by code that never
+ * asked for it.
+ */
 static void release_owned(int owner) {
     unsigned i;
     unsigned leases = 0, modifiers = 0, subscriptions = 0;
@@ -314,6 +432,10 @@ static void release_all_scripts(void) {
     for (i = 0; i < g_script_count; ++i) release_owned((int)i);
 }
 
+/* ------------------------------------------------------------------ */
+/* Read surface                                                        */
+/* ------------------------------------------------------------------ */
+
 static dltb_subject subject_argument(lua_State *L, int index) {
     dltb_subject subject = DLTB_SUBJECT_NONE;
     if (!lua_isnoneornil(L, index))
@@ -333,6 +455,10 @@ static int push_value(lua_State *L, const dltb_value *value) {
     return 1;
 }
 
+/*
+ * Coerce a Lua argument into the type the path actually declares, so a script
+ * writing 1 to a float path does the obvious thing instead of being refused.
+ */
 static int value_from_lua(lua_State *L, int index, dltb_type type, dltb_value *out) {
     memset(out, 0, sizeof(*out));
     out->struct_bytes = sizeof(*out);
@@ -379,6 +505,14 @@ static int lua_bridge_log(lua_State *L) {
     return 0;
 }
 
+/*
+ * bridge.resolve(path) -> subject id
+ *
+ * New in 2.0.0, and the reason subject-bound state stops being invisible.
+ * Through 1.0.2 every hunger.*, player.* and flashlight.* path returned
+ * DLTB_STALE_SUBJECT because the host passed DLTB_SUBJECT_NONE and bound no
+ * resolve; those paths are also where most of the interesting writes live.
+ */
 static int lua_bridge_resolve(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     dltb_subject subject = DLTB_SUBJECT_NONE;
@@ -420,6 +554,19 @@ static int lua_bridge_describe(lua_State *L) {
     return 1;
 }
 
+/*
+ * bridge.list(prefix) -> names, total
+ *
+ * This is for discovery. Without it a script can only confirm a path it
+ * already knows the exact spelling of, which leaves the largest thing the
+ * Bridge publishes -- 3111 reflected PlayerVariables -- invisible from inside
+ * the inspection tool built to look at it.
+ *
+ * `names` is a plain array of path strings; per-path type/access/scope/tier
+ * stay behind bridge.describe so a broad listing does not build thousands of
+ * Lua tables. `total` is the Bridge's true match count, which is larger than
+ * #names when the ceiling clipped the listing.
+ */
 static int lua_bridge_list(lua_State *L) {
     const char *prefix = luaL_optstring(L, 1, "");
     dltb_path_info *buffer;
@@ -441,7 +588,8 @@ static int lua_bridge_list(lua_State *L) {
     status = g_api->state->enumerate(g_client, prefix, buffer,
                                      (uint32_t)sizeof(*buffer),
                                      CRANE_MAX_LIST, &total);
-
+    /* TRUNCATED is a short buffer, not a failed call: the records that did
+       land are valid and the count is the real one. */
     if (status != DLTB_OK && status != DLTB_TRUNCATED) {
         free(buffer);
         push_status_error(status);
@@ -461,6 +609,10 @@ static int lua_bridge_list(lua_State *L) {
     lua_pushinteger(L, (lua_Integer)total);
     return 2;
 }
+
+/* ------------------------------------------------------------------ */
+/* Write surface                                                       */
+/* ------------------------------------------------------------------ */
 
 static int lua_bridge_set(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
@@ -499,7 +651,20 @@ static int lua_bridge_claim(lua_State *L) {
     if (!path_type(path, &type)) {
         lua_pushnil(L); lua_pushliteral(L, "DLTB_UNKNOWN_PATH"); return 2;
     }
-
+    /*
+     * Exclusivity between scripts, enforced here because the Bridge cannot.
+     *
+     * Leases are exclusive per path, and the manager's Move up/Move down exists
+     * to decide who wins when two scripts want the same one. That promise was
+     * never kept: the Bridge keys ownership on the client handle, all scripts
+     * share one, and so the second claimant was granted the path and quietly
+     * overwrote the first. The live gate on 2026-08-18 caught it, with both
+     * scripts reporting success and the LOWER one winning.
+     *
+     * Checked before the Bridge call so a refusal costs nothing and leaves no
+     * lease to unwind. The refusal names both scripts, because "refused" without
+     * saying who holds it sends the user to the wrong file.
+     */
     for (slot = 0; slot < CRANE_MAX_LEASES; ++slot) {
         if (!g_leases[slot].active) continue;
         if (g_leases[slot].owner == g_current_owner) continue;
@@ -529,6 +694,10 @@ static int lua_bridge_claim(lua_State *L) {
     return 1;
 }
 
+/*
+ * Handles are validated against the caller's ownership on every use, so one
+ * script cannot write through another's lease by guessing an integer.
+ */
 static lua_host_lease *lease_argument(lua_State *L, int index) {
     lua_Integer handle = luaL_checkinteger(L, index);
     lua_host_lease *entry;
@@ -634,6 +803,8 @@ static int lua_bridge_modifier_write(lua_State *L) {
     return 1;
 }
 
+/* Returns this modifier's own contribution and the combined effective value,
+   which is the only way a script can see what the other contributions did. */
 static int lua_bridge_modifier_read(lua_State *L) {
     lua_host_modifier *entry = modifier_argument(L, 1);
     dltb_value contribution, effective;
@@ -660,6 +831,10 @@ static int lua_bridge_modifier_release(lua_State *L) {
     return 1;
 }
 
+/* ------------------------------------------------------------------ */
+/* Events                                                              */
+/* ------------------------------------------------------------------ */
+
 static void push_event(const dltb_event *event, dltb_scope scope) {
     uint32_t i;
     lua_createtable(g_lua, 0, 5);
@@ -680,6 +855,10 @@ static void push_event(const dltb_event *event, dltb_scope scope) {
     lua_setfield(g_lua, -2, "data");
 }
 
+/*
+ * A callback runs as its owning script, so a lease claimed from inside an
+ * event handler belongs to that script and is released with it.
+ */
 static void on_event(dltb_event *event, dltb_scope scope, void *context) {
     lua_host_subscription *entry = (lua_host_subscription *)context;
     int previous_owner;
@@ -743,12 +922,32 @@ static void install_bridge_table(void) {
     lua_setglobal(g_lua, "bridge");
 }
 
+/* ------------------------------------------------------------------ */
+/* Loading                                                             */
+/* ------------------------------------------------------------------ */
+
 static void script_full_path(const char *file, wchar_t *out, size_t capacity) {
     wchar_t wide[CRANE_MAX_NAME];
     MultiByteToWideChar(CP_UTF8, 0, file, -1, wide, CRANE_MAX_NAME);
     _snwprintf_s(out, capacity, _TRUNCATE, L"%sscripts\\%s", g_module_dir, wide);
 }
 
+/*
+ * Publishes one script's parameters as the global `params` before it runs.
+ *
+ * Values come from the manifest, never from the script. A script declares its
+ * knobs in header comments which only the manager reads; Crane neither parses
+ * nor enforces those declarations, so a parameter absent from the manifest is
+ * simply absent here. Scripts therefore state their own fallback:
+ *
+ *     local speed = params.speed or 1.0
+ *
+ * which also means a hand-edited manifest that drops a key degrades to the
+ * script's default rather than to nil arithmetic.
+ *
+ * Set fresh per script: two scripts must never see each other's values, and a
+ * script with no parameters gets an empty table rather than leftovers.
+ */
 static void push_params(unsigned index) {
     unsigned i;
     lua_createtable(g_lua, 0, (int)g_scripts[index].param_count);
@@ -803,7 +1002,10 @@ static void load_one_script(unsigned index) {
                               g_scripts[index].error, sizeof(g_scripts[index].error))) {
         g_scripts[index].state = CRANE_STATE_LOADED;
         g_scripts[index].error[0] = '\0';
-
+        /* One line per enabled script, at DEBUG. When this host ran a single
+           startup.lua, one line for the host was the right granularity; as a
+           mod loader each enabled script is effectively a mod, and knowing
+           which ones are live is what you want when one misbehaves. */
         if (g_scripts[index].param_count)
             host_log(DLTB_LOG_CLASS_DEBUG, "running %s (%u parameter(s))",
                      g_scripts[index].file, g_scripts[index].param_count);
@@ -830,6 +1032,8 @@ static void json_escape(const char *in, char *out, size_t out_bytes) {
         case '\t': escaped = "\\t"; break;
         default:
             if (c < 0x20) {
+                /* Lua messages are ordinary text, but a control character would
+                   produce invalid JSON and the manager would refuse the file. */
                 _snprintf_s(buffer, sizeof(buffer), _TRUNCATE, "\\u%04x", c);
                 escaped = buffer;
             }
@@ -858,6 +1062,21 @@ static const char *state_name(crane_script_state state) {
     }
 }
 
+/*
+ * Writes DLTBRuntimeCrane.status.json after every reload.
+ *
+ * This is the only channel from the runtime back to CraneManager. The manager
+ * writes the manifest and this host reads it; without this file the manager can
+ * show that a script is ticked but never that it failed.
+ *
+ * A file rather than the named pipe: the manager already watches this
+ * directory, a file survives the manager not being open, and it needs no
+ * connection handshake for something written a few times a session.
+ *
+ * Written whole and small, with no partial-write protection beyond that -- a
+ * reader that catches a half-written file parses nothing and waits for the next
+ * change notification, the same thing it does for a malformed manifest.
+ */
 static void write_status(void) {
     HANDLE file;
     DWORD written = 0;
@@ -890,6 +1109,9 @@ static void write_status(void) {
     file = CreateFileW(g_status_path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
+        /* The host works perfectly well with no manager watching, so this is
+           neither fatal nor worth an ERROR. Say it once at DEBUG so a puzzled
+           manager has an explanation in the log. */
         host_log(DLTB_LOG_CLASS_DEBUG, "could not write DLTBRuntimeCrane.status.json");
         return;
     }
@@ -897,12 +1119,23 @@ static void write_status(void) {
     CloseHandle(file);
 }
 
+/*
+ * Reload is release-and-reclaim for every script rather than a per-file diff.
+ *
+ * Manifest order decides who wins a contested lease, so reloading one script
+ * in place could leave a path held by whoever happened to claim it first
+ * historically rather than by whoever the current order says should hold it.
+ * Rebuilding the whole set keeps "what is loaded" a function of the manifest
+ * alone.
+ */
 static void reload_scripts(void) {
     unsigned i;
     release_all_scripts();
     read_manifest();
     for (i = 0; i < g_script_count; ++i) {
         if (!g_scripts[i].enabled) {
+            /* At DEBUG: a script that is present but switched off is a state
+               the player chose and may have forgotten choosing. */
             host_log(DLTB_LOG_CLASS_DEBUG, "skipping %s (disabled)", g_scripts[i].file);
             g_scripts[i].state = CRANE_STATE_DISABLED;
             g_scripts[i].error[0] = '\0';
@@ -927,6 +1160,19 @@ static void run_console_command(void) {
     }
 }
 
+/*
+ * Turning writes off releases everything the scripts own.
+ *
+ * Gating only *new* writes would leave a script's lease still applied while the
+ * INI says writes are disabled -- the config claiming one thing and the game
+ * showing another. Releasing restores every baseline, so switching the flag
+ * off returns the game to vanilla for anything a script was holding.
+ *
+ * Turning it on reloads too: a script that was refused a claim at load has no
+ * other way to retry.
+ *
+ * Either way this is reload_scripts(), which already releases and reclaims.
+ */
 static void on_update(dltb_scope scope, void *context) {
     (void)scope; (void)context;
     InterlockedExchange(&g_task_pending, 0);
@@ -960,6 +1206,7 @@ static void queue_update(void) {
     }
 }
 
+/* True when the manifest or any listed script changed on disk. */
 static int sources_changed(void) {
     WIN32_FILE_ATTRIBUTE_DATA attributes;
     unsigned i;
@@ -972,7 +1219,10 @@ static int sources_changed(void) {
     } else if (g_manifest_present) {
         return 1;
     }
-
+    /* The INI is watched alongside the manifest so AllowWrites and LogLevel can
+       be changed without restarting the game. Everything else about this host
+       hot-reloads; requiring a restart to flip one switch would put back the
+       slow loop it exists to remove. */
     if (GetFileAttributesExW(g_ini_path, GetFileExInfoStandard, &attributes)) {
         if (!g_ini_present || CompareFileTime(&attributes.ftLastWriteTime, &g_ini_write) != 0) {
             g_ini_write = attributes.ftLastWriteTime;
@@ -1052,7 +1302,8 @@ static DWORD WINAPI worker_thread(LPVOID unused) {
     if (!g_api) return 0;
     g_lua = lua_newstate(host_alloc, &g_alloc);
     if (!g_lua) { host_log(DLTB_LOG_CLASS_ERROR, "cannot create Lua state (memory cap %u bytes)", CRANE_MEMORY_LIMIT); return 0; }
-
+    /* A game experiment surface rather than a general Windows automation host:
+       os, io, debug and package are left out. */
     luaL_requiref(g_lua, "_G", luaopen_base, 1); lua_pop(g_lua, 1);
     luaL_requiref(g_lua, LUA_TABLIBNAME, luaopen_table, 1); lua_pop(g_lua, 1);
     luaL_requiref(g_lua, LUA_STRLIBNAME, luaopen_string, 1); lua_pop(g_lua, 1);
@@ -1080,6 +1331,9 @@ static DWORD WINAPI worker_thread(LPVOID unused) {
     if (g_pipe_worker) CloseHandle(g_pipe_worker);
     while (WaitForSingleObject(g_stop_event, 250) == WAIT_TIMEOUT) {
         if (sources_changed()) {
+            /* Settings are re-read in the update phase rather than here:
+               log->set_level and any consequent release must happen on the
+               Bridge's thread, not the watcher's. */
             InterlockedExchange(&g_settings_dirty, 1);
             InterlockedExchange(&g_reload_requested, 1);
             queue_update();
