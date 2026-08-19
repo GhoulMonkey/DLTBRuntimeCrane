@@ -15,3 +15,5 @@
 # Copied out of asi/vendor by sdk/tools-source/build-checker.sh, next to the
 # checker it licenses. The original is published, this copy is a build output.
 /sdk/LICENSES/
+/sdk/package/
+/dist/

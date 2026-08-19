@@ -67,6 +67,18 @@ jobs:
           Write-Host "SDK validation passed"
           exit 0
 
+      # Same script the SDK archive is cut with locally, so the download an
+      # author gets from a release is the one the gates above just ran against.
+      - name: Package the SDK
+        shell: pwsh
+        working-directory: sdk
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./build-sdk.ps1
+          New-Item -ItemType Directory -Force -Path ../dist | Out-Null
+          Copy-Item package/*.zip ../dist/
+          exit 0
+
       # Packaged by the project's own script, so the archive has the same layout
       # as the Nexus download rather than one assembled here.
       - name: Package
