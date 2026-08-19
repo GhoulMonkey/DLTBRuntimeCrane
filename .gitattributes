@@ -1,0 +1,4 @@
+# Keep bundled and generated files out of GitHub's language statistics, so the
+# bar reflects the code written here rather than Lua's C sources.
+asi/vendor/** linguist-vendored
+layout/** linguist-generated
