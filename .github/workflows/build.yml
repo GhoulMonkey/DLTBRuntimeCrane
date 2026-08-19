@@ -40,17 +40,24 @@ jobs:
         working-directory: manager
         run: ./build.sh
 
-      - name: Collect
+      # Packaged by the project's own script, so the archive has the same layout
+      # as the Nexus download rather than one assembled here.
+      - name: Package
         shell: bash
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in refs/tags/*) ;; *) version="$(git rev-parse --short HEAD)" ;; esac
           mkdir -p dist
-          cp asi/DLTBRuntimeCrane.asi dist/
-          cp manager/bin/Release/CraneManager.exe dist/
+          python tools/make_package.py "dist/DLTBRuntimeCrane-$version.zip" \
+            asi/DLTBRuntimeCrane.asi \
+            manager/bin/Release/CraneManager.exe \
+            asi/vendor/LICENSE.txt \
+            layout/ph_ft/work/bin/x64/scripts/quick_hands.lua
           cd dist && sha256sum * | tee SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: crane-binaries
+          name: crane-package
           path: dist/
 
       # gh is preinstalled on the runner, so no third-party action is involved.
@@ -64,7 +71,8 @@ jobs:
             --title "CRANE $GITHUB_REF_NAME" \
             --notes "Built from $GITHUB_SHA by GitHub Actions.
 
-          These binaries are compiled from this repository. They are not
-          byte-identical to the Nexus Mods download: the linker records the
-          build path, so the same source built elsewhere differs. Checksums for
-          what was built here are in SHA256SUMS.txt."
+          The archive has the same layout as the Nexus Mods download and installs
+          the same way. It is not byte-identical to it: the linker records the
+          build path, so the same source compiled on a different machine produces
+          different binaries. Checksums for what was built here are in
+          SHA256SUMS.txt. Install the Nexus file if you want the published one."
