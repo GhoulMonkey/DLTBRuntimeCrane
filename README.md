@@ -97,4 +97,4 @@ is an empty list.
 `AllowWrites=0` in the `.ini` is the shipped default. Scripts may only read
 until it is set to 1.
 
-**Keep an eye out for the SDK!**
+**Keep an eye out for the SDK.**
