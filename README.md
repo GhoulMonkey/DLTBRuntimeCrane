@@ -39,6 +39,7 @@ The source for the two binaries in the download:
 | `asi/vendor/` | Lua 5.4, unmodified, MIT licensed |
 | `asi/include/` | the Bridge's public client headers, compiled against |
 | `layout/` | the installed file tree, with the two build outputs missing |
+| `sdk/` | the script author's kit: Lua API reference, templates, examples, validator |
 
 `asi/vendor/` is Lua 5.4 as published, so it can be diffed against the release
 from lua.org.
@@ -97,4 +98,38 @@ is an empty list.
 `AllowWrites=0` in the `.ini` is the shipped default. Scripts may only read
 until it is set to 1.
 
-**Keep an eye out for the SDK.**
+## Writing scripts
+
+`sdk/` is the authoring kit. A CRANE script is a single `.lua` file with a
+metadata header; CraneManager reads that header to build the settings a player
+sees, and the script reaches the game through the global `bridge` table.
+
+Start at [sdk/docs/QUICKSTART.md](sdk/docs/QUICKSTART.md), then
+[sdk/docs/CRANE-LUA-API.md](sdk/docs/CRANE-LUA-API.md), which is the reference
+for all 16 calls.
+
+| | |
+|---|---|
+| `sdk/docs/` | quickstart, Lua API reference, Bridge concepts, metadata format, packaging, troubleshooting |
+| `sdk/templates/` | a minimal script and a configurable one, to copy |
+| `sdk/examples/` | one technique each: read state, observe an event, take an exclusive lease, stack a modifier |
+| `sdk/library/` | annotations, so a Lua language server completes `bridge` and `params` |
+| `sdk/schemas/` | the state paths and events this Bridge exposes, and the metadata schema |
+| `sdk/tools/` | `validate.ps1` and `package.ps1` |
+
+Validate a script before installing it:
+
+```powershell
+cd sdk
+./tools/validate.ps1 ../MyMod.lua
+```
+
+The syntax check uses `sdk/tools/crane-lua-check.exe`, which the packaged SDK
+ships prebuilt. Build it here with `sdk/tools-source/build-checker.sh`, using the
+same LLVM-MinGW as the ASI, or install Lua 5.4 and `validate.ps1` falls back to
+`luac -p`. Metadata and parameter validation run without either.
+
+The SDK is newer than the rest of this repository and still under development.
+The catalog under `sdk/schemas/` is an authoring aid; the installed Bridge is
+authoritative, and `bridge.describe` and `bridge.list` answer at runtime. Expect
+paths to be added to it.

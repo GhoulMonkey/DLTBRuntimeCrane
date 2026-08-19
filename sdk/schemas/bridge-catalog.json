@@ -1,0 +1,383 @@
+{
+  "schemaVersion": 1,
+  "gameVersion": "1.6.4",
+  "bridgeAbi": 3,
+  "complete": false,
+  "note": "Static core catalog for authoring. Reflected var.*, engine.*, diag.* and interaction.* families are discovered live with bridge.list/describe. ACCESS VALUES: \"read\" supports bridge.get, \"set\" supports bridge.set, \"hold\" supports bridge.claim and lease_write, \"modifier\" supports bridge.modifier_acquire. They are independent, and a path may support more than one: hunger.drain_multiplier is both holdable and modifier-capable. Most writable paths listed here are set-only and CANNOT be leased. A \"subject\" of \"\" means the path takes NO subject, and passing one is an error rather than being ignored.",
+  "subjects": [
+    "player",
+    "hunger",
+    "player.flashlight"
+  ],
+  "paths": [
+    {
+      "name": "bridge.version",
+      "type": "string",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "bridge.game_version",
+      "type": "string",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "bridge.verified",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "app.foreground",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "session.state",
+      "type": "string",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "session.loading",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "session.world_ready",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "session.playable",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "provisional"
+    },
+    {
+      "name": "player.health",
+      "type": "number",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    },
+    {
+      "name": "player.stamina",
+      "type": "number",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    },
+    {
+      "name": "player.sprinting",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    },
+    {
+      "name": "player.activity",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "provisional"
+    },
+    {
+      "name": "hunger.points",
+      "type": "number",
+      "access": [
+        "read",
+        "set"
+      ],
+      "subject": "hunger",
+      "tier": "stable"
+    },
+    {
+      "name": "hunger.state",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "hunger",
+      "tier": "provisional"
+    },
+    {
+      "name": "hunger.max_points",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "hunger",
+      "tier": "stable"
+    },
+    {
+      "name": "hunger.full_threshold",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "hunger",
+      "tier": "stable"
+    },
+    {
+      "name": "flashlight.energy",
+      "type": "number",
+      "access": [
+        "read",
+        "set"
+      ],
+      "subject": "player.flashlight",
+      "tier": "stable"
+    },
+    {
+      "name": "flashlight.max_energy",
+      "type": "number",
+      "access": [
+        "read"
+      ],
+      "subject": "player.flashlight",
+      "tier": "stable"
+    },
+    {
+      "name": "flashlight.depleted",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "player.flashlight",
+      "tier": "stable"
+    },
+    {
+      "name": "flashlight.mode",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "player.flashlight",
+      "tier": "provisional"
+    },
+    {
+      "name": "hunger.drain_multiplier",
+      "type": "number",
+      "access": [
+        "read",
+        "hold",
+        "modifier"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "hunger.band",
+      "type": "integer",
+      "access": [
+        "read"
+      ],
+      "subject": "hunger",
+      "tier": "stable"
+    },
+    {
+      "name": "session.ready",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "",
+      "tier": "stable"
+    },
+    {
+      "name": "player.combat.active",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    },
+    {
+      "name": "player.combat.available",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    },
+    {
+      "name": "player.consumption.active",
+      "type": "boolean",
+      "access": [
+        "read"
+      ],
+      "subject": "player",
+      "tier": "stable"
+    }
+  ],
+  "events": [
+    {
+      "name": "player.updated",
+      "phase": "after",
+      "subject": "player",
+      "fields": []
+    },
+    {
+      "name": "hunger.updated",
+      "phase": "after",
+      "subject": "hunger",
+      "fields": [
+        "hunger_points",
+        "hunger_state",
+        "hunger_max_points",
+        "hunger_full_threshold",
+        "hunger_band"
+      ]
+    },
+    {
+      "name": "hunger.state.changed",
+      "phase": "after",
+      "subject": "hunger",
+      "fields": [
+        "previous",
+        "current",
+        "points",
+        "max_points"
+      ]
+    },
+    {
+      "name": "flashlight.updated",
+      "phase": "after",
+      "subject": "player.flashlight",
+      "fields": [
+        "energy",
+        "max_energy",
+        "mode",
+        "state"
+      ]
+    },
+    {
+      "name": "flashlight.depleted",
+      "phase": "before",
+      "subject": "player.flashlight",
+      "fields": [
+        "energy",
+        "max_energy",
+        "mode",
+        "state"
+      ]
+    },
+    {
+      "name": "item.use.requested",
+      "phase": "before",
+      "subject": "player",
+      "fields": [
+        "item",
+        "slot"
+      ]
+    },
+    {
+      "name": "item.use.completed",
+      "phase": "after",
+      "subject": "player",
+      "fields": [
+        "item",
+        "count_before",
+        "count_after",
+        "reason"
+      ]
+    },
+    {
+      "name": "item.use.cancelled",
+      "phase": "after",
+      "subject": "player",
+      "fields": [
+        "item",
+        "count_before",
+        "count_after",
+        "reason"
+      ]
+    },
+    {
+      "name": "inventory.changed",
+      "phase": "after",
+      "subject": "player",
+      "fields": [
+        "item",
+        "count_before",
+        "count_after"
+      ]
+    }
+  ],
+  "dynamicFamilies": [
+    {
+      "pattern": "var.*",
+      "access": [
+        "read",
+        "hold"
+      ],
+      "tier": "provisional",
+      "note": "Engine PlayerVariables. Leasable, not settable. Names are discovered at runtime with bridge.list(\"var.\"); there are thousands, so filter by prefix."
+    },
+    {
+      "pattern": "interaction.<Class>.duration_scale",
+      "access": [
+        "read",
+        "hold"
+      ],
+      "tier": "stable",
+      "note": "Hold time for one interaction class, as a multiplier of vanilla. Leasable, not settable. This is what examples/exclusive-lease.lua claims."
+    },
+    {
+      "pattern": "engine.*",
+      "access": [
+        "read",
+        "hold"
+      ],
+      "tier": "provisional",
+      "note": "Engine objects and level state. Leasable, not settable."
+    },
+    {
+      "pattern": "diag.*",
+      "access": [
+        "read"
+      ],
+      "tier": "stable",
+      "note": "Diagnostics. Read-only; neither settable nor leasable."
+    }
+  ]
+}

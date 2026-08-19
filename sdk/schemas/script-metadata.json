@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dltb.example/crane/script-metadata.schema.json",
+  "title": "CRANE script metadata model",
+  "type": "object",
+  "required": ["name", "description", "parameters"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "type"],
+        "properties": {
+          "key": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "type": { "enum": ["number", "bool", "boolean", "string", "enum"] },
+          "default": {}, "min": { "type": "number" }, "max": { "type": "number" },
+          "values": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "label": { "type": "string" }, "group": { "type": "string" },
+          "desc": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

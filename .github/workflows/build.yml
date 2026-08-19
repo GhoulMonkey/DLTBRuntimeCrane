@@ -40,6 +40,28 @@ jobs:
         working-directory: manager
         run: ./build.sh
 
+      - name: Build the SDK Lua syntax checker
+        shell: bash
+        working-directory: sdk
+        run: ./tools-source/build-checker.sh
+
+      # Every shipped example and template has to validate, and both deliberately
+      # broken fixtures have to be rejected. The second half is what detects a
+      # validator that has stopped checking.
+      - name: Validate the SDK
+        shell: pwsh
+        working-directory: sdk
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($good in Get-ChildItem examples, templates -Recurse -Filter *.lua) {
+            & ./tools/validate.ps1 $good.FullName -RequireSyntaxCheck
+            if ($LASTEXITCODE -ne 0) { throw "should have validated: $($good.Name)" }
+          }
+          foreach ($bad in Get-ChildItem tests -Filter *.lua) {
+            & ./tools/validate.ps1 $bad.FullName -RequireSyntaxCheck
+            if ($LASTEXITCODE -eq 0) { throw "invalid fixture was accepted: $($bad.Name)" }
+          }
+
       # Packaged by the project's own script, so the archive has the same layout
       # as the Nexus download rather than one assembled here.
       - name: Package
