@@ -1,4 +1,11 @@
+"""Mirrors IniFile.Read and reports what CraneManager will show.
+
+Written because a generated annotation can bind to nothing and look fine in the
+file: the label says "Famished" while the key it names does not exist in that
+section, and the manager renders it greyed out with nobody the wiser.
+"""
 import io, sys, re
+
 
 def tokenize(text):
     tokens, cur, quoted, ever = [], [], False, False
@@ -18,10 +25,11 @@ def tokenize(text):
         tokens.append((''.join(cur), ever))
     return tokens, quoted
 
+
 def read(path):
     section = ''
     values = {}
-    declared = []
+    declared = []          # (section, key, type, opts)
     enable = None
     pending = []
     for raw in io.open(path, encoding='utf-8'):
@@ -71,6 +79,7 @@ def read(path):
             key = line.split('=', 1)[0].strip()
             values.setdefault((section, key), line.split('=', 1)[1].strip())
     return values, declared, enable
+
 
 path = sys.argv[1]
 values, declared, enable = read(path)

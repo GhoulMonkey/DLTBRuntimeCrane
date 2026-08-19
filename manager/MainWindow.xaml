@@ -8,16 +8,42 @@
         WindowStartupLocation="CenterScreen"
         AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver">
 
+  <!--
+    Four horizontal bands and one vertical split: identity and system state,
+    actions, body, summary. The split is the only vertical division and
+    separates "what do I have" from "what is this one".
+
+    Nothing here is positioned by coordinate.
+  -->
+  <!--
+    Everything scales together from one transform on the root. WPF measures in
+    device-independent units, so this is a genuine zoom rather than a font
+    change: controls, spacing and text all grow, and nothing overlaps at any
+    setting. Persisted, and adjustable from Settings.
+  -->
   <DockPanel x:Name="Root">
     <DockPanel.LayoutTransform>
       <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1"/>
     </DockPanel.LayoutTransform>
 
+    <!--
+      The window title lives in the OS title bar and nowhere else. It was in both
+      places, which is one too many, and the fix is to delete our copy rather
+      than the shell's: suppressing the real title bar means reimplementing drag,
+      resize, snap, minimise, maximise and the accessibility behaviours that come
+      with it, and every one of those is worse hand-rolled.
+
+      That leaves this band carrying only system state, so it merges into the
+      toolbar row below and buys back its height.
+    -->
+
+    <!-- (10) Summary -->
     <Border DockPanel.Dock="Bottom" Background="{StaticResource SurfaceAlt}"
             BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="12,7">
       <TextBlock x:Name="StatusText" Text="Starting..." Style="{StaticResource Subtle}"/>
     </Border>
 
+    <!-- (2) Actions, placed by scope: global left, configuration right -->
     <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Rule}"
             BorderThickness="0,0,0,1" Padding="12,8">
       <Grid>
@@ -37,6 +63,7 @@
       </Grid>
     </Border>
 
+    <!-- Body -->
     <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="320" MinWidth="240"/>
@@ -44,7 +71,30 @@
         <ColumnDefinition Width="*" MinWidth="320"/>
       </Grid.ColumnDefinitions>
 
+      <!--
+        Two lists, one column. Scripts are things the user added and can delete;
+        Bridge clients are installed mods whose settings this tool can reach.
+        They are separated rather than merged because the two carry different
+        promises: unticking a script stops it entirely, while unticking a client
+        only sets its own Enabled key and only if it declared one.
+
+        The splitter gives scripts the flexible half and clients a proportional
+        one, so a long client list cannot squeeze the scripts to nothing.
+      -->
       <Grid Grid.Column="0">
+        <!--
+          Clients above scripts, and clients sized to their content.
+
+          Installed mods are a fixed set the user did not choose the length of,
+          so the list should be exactly as tall as it needs to be; scripts are
+          open-ended and get the elastic remainder. Proportional rows made a
+          two-client list sit in a half-empty panel while the scripts below it
+          scrolled.
+
+          MaxHeight caps the growth so a folder full of annotated mods cannot
+          squeeze the scripts list to nothing. Past the cap the client list
+          scrolls internally, which is the right failure.
+        -->
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto" MaxHeight="360"/>
@@ -76,6 +126,10 @@
           </ListBox.ItemContainerStyle>
           <ListBox.ItemTemplate>
             <DataTemplate>
+              <!-- Two lines. Control and name on the first, adaptive secondary
+                   text indented beneath. The state dot is flush right so the
+                   eye can scan either edge independently: all the checkboxes,
+                   or all the dots. -->
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
@@ -120,6 +174,10 @@
         </ListBox.ItemContainerStyle>
         <ListBox.ItemTemplate>
           <DataTemplate>
+            <!-- Same two-line shape as a script row, so the eye reads one list
+                 idiom rather than two. When the client declares no enable key
+                 the checkbox is absent rather than disabled: a control that
+                 cannot do anything still looks like a control. -->
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -130,6 +188,19 @@
                 <RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
 
+              <!--
+                No checkbox here.
+
+                A client's enable key is just one of its INI values, and for
+                Beastly Hunger its own comment reads "Restart required after
+                changing this". Rendering it as a checkbox identical to the
+                script checkboxes above promised the same immediacy those have,
+                which it cannot deliver. It now appears in the detail pane with
+                the rest of the settings, where the caveat can be stated.
+
+                The row still says "Off" on its second line, so the list keeps
+                the information without offering an action it cannot honour.
+              -->
               <TextBlock Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="0"
                          Text="{Binding Name}" VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis"/>

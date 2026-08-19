@@ -1,4 +1,27 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WPF on .NET Framework 4.8.
+
+    Framework 4.8 ships with every Windows 10 and 11, and PresentationFramework,
+    PresentationCore, WindowsBase and System.Xaml ship with it - so users install
+    nothing, exactly as with the WinForms version this replaces.
+
+    WPF rather than WinForms, for two reasons:
+
+      - The settings pane is UI generated from a schema. That is what WPF is for;
+        in WinForms it was two hundred lines of pixel arithmetic that could not
+        express "label left, value right, description beneath" without hardcoded
+        offsets.
+      - Constraint-based layout makes a whole class of bug impossible. Three
+        layout defects shipped from this window in one day - an unreachable
+        button, a clipped pane, columns scrolled out of view - all from fixed
+        offsets inside containers whose size follows the window. A WPF control
+        cannot fall off the edge of its parent.
+
+    Deterministic so the published binary can be reproduced from source and its
+    hash compared against the one on the download page.
+  -->
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -10,12 +33,33 @@
     <Deterministic>true</Deterministic>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Warnings are errors here for the same reason they are in the C build:
+         a warning nobody reads is a defect with a delay on it. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!--
+      The exe's Win32 icon, and the only icon mechanism this project uses.
+
+      It is what Explorer, the taskbar and Vortex's tool list read, and a WPF
+      window with no explicit Icon inherits it too, so one declaration covers
+      every surface.
+
+      MainWindow.xaml briefly also carried Icon="CraneManager.ico". That is a
+      separate mechanism: a pack URI resolved against the assembly's resource
+      stream at runtime, which ApplicationIcon does not populate. dev.21 shipped
+      with it and died on launch with a XamlParseException wrapping
+      System.IO.IOException from ResourcePart.GetStreamCore: a clean compile,
+      167 passing tests, and an exe that could not open a window. Adding a
+      Resource Include did not fix it either, because the SDK's default item
+      globbing already claims the file.
+    -->
     <ApplicationIcon>CraneManager.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Reference assemblies for net48, since no Visual Studio targeting pack is
+         installed. This is the build's one network dependency; the output still
+         needs nothing installed on a user's machine. -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
@@ -23,6 +67,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The test harness is built separately by build.sh and must not be linked
+         into the application. -->
     <Compile Remove="TestManifest.cs" />
   </ItemGroup>
 

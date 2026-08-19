@@ -1,3 +1,19 @@
+// Reads DLTBRuntimeCrane.status.json -- the runtime's report back.
+//
+// The manager writes the manifest and Crane reads it. This is the only channel
+// in the other direction, and without it the window can show that a script is
+// ticked but never that it failed on line 47 -- a checkbox reading "enabled"
+// beside a script that never loaded.
+//
+// Written by Crane after every reload. Read here on the FileSystemWatcher that
+// already covers this directory.
+//
+// Tolerant where the manifest reader is strict, for a reason. A malformed
+// manifest is the user's file and they must be told precisely what is wrong; a
+// malformed status file is our bug, the user cannot fix it, and refusing to show
+// the script list because a report was unreadable would punish them for it. So
+// this returns what it could read and drops what it could not.
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -36,8 +52,27 @@ namespace CraneManager
     {
         public const string FileName = "DLTBRuntimeCrane.status.json";
 
+        /*
+         * How recently Crane must have written for its report to still be true.
+         *
+         * Crane rewrites this file on every reload and cannot write it at all
+         * when the game is not running, so age is the only available evidence
+         * that the report describes the present. This lives here, once, because
+         * it was previously applied in only one of the two places that need it:
+         * the header bar aged the file and said "Game: not running", while the
+         * state dots read the same file with no age check and reported scripts
+         * as loaded from a session that had ended half an hour earlier.
+         *
+         * The window therefore contradicted itself, and the half that was wrong
+         * was the reassuring half -- a green dot beside a script that was not
+         * running, which is the failure direction that actually costs somebody
+         * a playtest.
+         */
         public static readonly TimeSpan Freshness = TimeSpan.FromMinutes(5);
 
+        // Whether Crane has reported recently enough to be believed. The header
+        // bar's "Game: connected" and the per-script dots are the same claim and
+        // must not be able to disagree.
         public static bool IsFresh(string folder)
         {
             string path = Path.Combine(folder, FileName);
@@ -50,6 +85,10 @@ namespace CraneManager
             catch (UnauthorizedAccessException) { return false; }
         }
 
+        // Returns null when there is no current readable report -- Crane has not
+        // run yet, the file was caught mid-write, or it is left over from an
+        // earlier session. All three mean "no information", which the UI shows as
+        // Unknown rather than as an error.
         public static StatusReport Read(string folder)
         {
             string path = Path.Combine(folder, FileName);
@@ -69,6 +108,9 @@ namespace CraneManager
             report.WritesEnabled = Contains(text, "\"writes\": true") ||
                                    Contains(text, "\"writes\":true");
 
+            // Scanned rather than parsed. The shape is fixed and written by us, so
+            // a full parser would be ceremony; and being unable to read one entry
+            // must not cost the others.
             int index = 0;
             while (true)
             {
@@ -102,6 +144,7 @@ namespace CraneManager
             }
         }
 
+        // Finds `"key": "value"` from `index` onward and unescapes the value.
         private static string Field(string text, string key, ref int index)
         {
             int at = text.IndexOf(key, index, StringComparison.Ordinal);

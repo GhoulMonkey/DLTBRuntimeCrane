@@ -1,3 +1,9 @@
+// Two tiny converters the row template needs.
+//
+// A row binds a brush by name rather than by value, so the state vocabulary
+// lives in App.xaml with the rest of the palette instead of being constructed in
+// code. "What colour is a failure" then stays answerable in one file.
+
 using System;
 using System.Globalization;
 using System.Windows;

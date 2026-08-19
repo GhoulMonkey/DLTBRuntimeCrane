@@ -1,3 +1,9 @@
+// Remembers which folder the manager was last pointed at.
+//
+// Its own file because it is shared: the WinForms window used it and the WPF
+// window uses it. One value, in %APPDATA%, and it is only ever a fallback --
+// the manager normally finds Crane beside itself.
+
 using System;
 using System.IO;
 using System.Text;
@@ -27,6 +33,8 @@ namespace CraneManager
             catch (IOException) { return ""; }
         }
 
+        // UI scale, persisted beside the folder. Stored as a percentage so the
+        // file stays readable if anybody opens it.
         public static double LoadScale()
         {
             try

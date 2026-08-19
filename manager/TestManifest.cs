@@ -1,3 +1,14 @@
+// Round-trip and agreement tests for the manager's manifest handling.
+//
+// The property under test is that the manager and the runtime agree, rather than
+// that the parser works on its own. If the manager writes a manifest
+// DLTBRuntimeCrane.asi refuses, the failure surfaces in the game log rather than
+// in the editor, where it could have been fixed.
+//
+// The case list below mirrors tools\test_manifest.c. The two must move together:
+// if you add a case there, add it here. AgreementCases asserts the count so a
+// one-sided edit is at least visible.
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -56,6 +67,7 @@ internal static class TestManifest
         }
     }
 
+    // Mirrors the reject list in tools\test_manifest.c.
     private static readonly string[] AgreementCases = new string[]
     {
         "{\"scripts\":[{\"file\":\"a.lua\"",
@@ -95,6 +107,9 @@ internal static class TestManifest
             Check(!Parses(text, out count, out error), "runtime rejects this, so the manager must too");
         }
 
+        // The round trip: anything the manager writes, the manager must read
+        // back identically. This is what stops a name needing an escape, or an
+        // empty list, from producing a file that will not load.
         Console.WriteLine();
         Console.WriteLine("round trip");
         List<ScriptEntry> written = new List<ScriptEntry>();
@@ -116,6 +131,10 @@ internal static class TestManifest
         Check(ManifestFile.Read(ManifestFile.Write(new List<ScriptEntry>())).Count == 0,
               "an empty list round trips");
 
+        // ---- parameters ------------------------------------------------
+        // Same property as the agreement block above, applied to the schema's
+        // one nested object: the manager must not write a params block the ASI
+        // would refuse, nor accept one it would.
         Console.WriteLine();
         Console.WriteLine("parameters");
         Accepts("empty params", "{\"scripts\":[{\"file\":\"a.lua\",\"params\":{}}]}", 1);
@@ -142,7 +161,8 @@ internal static class TestManifest
             List<ScriptEntry> readBack = ManifestFile.Read(text);
             Check(readBack.Count == 1, "one entry back");
             Check(readBack[0].Params.Count == 4, "four parameters back");
-
+            // -0.9 is not representable exactly; "R" formatting is what keeps a
+            // tuned number from drifting on every save.
             Check((double)readBack[0].Params["incoming"] == -0.9, "double survives exactly");
             Check((double)readBack[0].Params["outgoing"] == 9.0, "whole number survives");
             Check((bool)readBack[0].Params["announce"], "bool survives");
@@ -185,7 +205,8 @@ internal static class TestManifest
             Check(mode != null && mode.Type == ParamType.Enum, "enum declared");
             Check(mode != null && mode.Values.Count == 2, "enum values parsed");
             Check(mode != null && (string)mode.Default == "fast", "enum default parsed");
-
+            // An unlabelled parameter falls back to its own name rather than
+            // rendering a blank row.
             Check(mode != null && mode.Label == "mode", "missing label falls back to the key");
         }
 
@@ -203,6 +224,10 @@ internal static class TestManifest
             Check(e.Params.ContainsKey("orphan"), "and is kept, not dropped");
         }
 
+        // ---- generated defaults -----------------------------------------
+        // package-all.sh used to assert AllowWrites=0 in the shipped INI. There
+        // is no shipped INI any more, so the assertion moves here, to the text
+        // that actually reaches a user's disk.
         Console.WriteLine();
         Console.WriteLine("generated defaults");
         {
@@ -210,10 +235,15 @@ internal static class TestManifest
             Check(ini.Contains("AllowWrites=0"), "generated INI ships writes OFF");
             Check(!ini.Contains("AllowWrites=1"), "and never ships them on");
             Check(ini.Contains("[Crane]"), "has the section Crane reads");
-
+            // The warning text is the only thing standing between a user and a
+            // switch that can alter their save, so its absence is a failure.
             Check(ini.Contains("unsandboxed"), "keeps the warning about unsandboxed code");
             Check(ini.Contains("LogLevel"), "documents LogLevel too");
 
+            // The example script is no longer generated; the archive ships
+            // quick_hands.lua instead. What must stay true is that first run
+            // writes an empty script list, so a deployed script is offered
+            // rather than enabled on somebody's behalf.
             {
                 string dir = Path.Combine(Path.GetTempPath(), "crane-first-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(dir);
@@ -232,6 +262,11 @@ internal static class TestManifest
             }
         }
 
+        // ---- status file -------------------------------------------------
+        // The property under test is that this reader accepts what Crane's C
+        // writer emits. A Lua error routinely contains quotes, backslashes and
+        // newlines, all of which the writer escapes -- so the escaping is the
+        // interesting half, not the field names.
         Console.WriteLine();
         Console.WriteLine("status file");
         {
@@ -257,7 +292,8 @@ internal static class TestManifest
                 Check(report.StateOf("quick_hands.lua") == ScriptState.Failed, "failed state");
                 Check(report.StateOf("godmode.lua") == ScriptState.Disabled, "disabled state");
                 Check(report.StateOf("gone.lua") == ScriptState.Missing, "missing state");
-
+                // Unknown must be distinguishable from disabled: one means Crane
+                // had nothing to say, the other means it skipped the script.
                 Check(report.StateOf("never_heard_of.lua") == ScriptState.Unknown,
                       "absent script reads as Unknown");
 
@@ -269,6 +305,8 @@ internal static class TestManifest
                 Check(report.ErrorOf("startup.lua") == "", "empty error stays empty");
             }
 
+            // A half-written file must not take the window down; the watcher
+            // will fire again when the write completes.
             File.WriteAllText(path, "{\n  \"version\": 1,\n  \"scripts\": [\n    { \"file\": \"a.lua\"");
             StatusReport partial = StatusFile.Read(dir);
             Check(partial != null, "a truncated report still returns something");
@@ -278,6 +316,12 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- annotated client INIs ----
+        //
+        // The manager is a guest in these files. They belong to other mods, are
+        // hand-edited by users, and their prose is the documentation somebody
+        // relies on. So the property under test covers both "the right value
+        // lands" and "nothing else moved".
         {
             Console.WriteLine();
             Console.WriteLine("== annotated client INIs ==");
@@ -316,6 +360,9 @@ internal static class TestManifest
             Check(client.Raw("Test", "Factor") == "10", "values survive surrounding whitespace");
             Check(client.Raw("Test", "Unknown") == "leave me alone", "undeclared keys are still read");
 
+            // Declared before any [Section] header, so they belong to the first
+            // section the file goes on to open. That is the layout Time Lapse
+            // uses and it must keep working.
             IniSetting factor = IniFile.Find(client, "Test", "Factor");
             Check(factor != null, "a declaration above the section header binds to it");
             Check(factor != null && factor.Decl.Group == "Speed",
@@ -327,6 +374,7 @@ internal static class TestManifest
             Check(!IniFile.Write(path, "Test", "Missing", "0"),
                   "and writing it is refused rather than appending a stray key");
 
+            // Write one value, disturb nothing else.
             Check(IniFile.Write(path, "Test", "Factor", "250"), "a declared key can be written");
             string[] after = File.ReadAllLines(path);
             Check(after.Length == original.Length, "the line count is unchanged");
@@ -336,14 +384,18 @@ internal static class TestManifest
             Check(after[12].StartsWith("Factor  ="), "the key's own spacing is preserved");
             Check(IniFile.Read(path).Raw("Test", "Factor") == "250", "and the new value reads back");
 
+            // Booleans are 1/0 in an INI, not true/false.
             Check(IniFile.FromBool(false) == "0", "false writes as 0");
             Check(IniFile.IsTruthy("1") && !IniFile.IsTruthy("0"), "and 1/0 read back");
             Check(IniFile.Write(path, "Test", "Enabled", "0"), "the enable key can be written");
             Check(!IniFile.Read(path).Enabled, "which turns the client off");
 
+            // Whole numbers must not acquire a decimal point: these are key
+            // codes and percentages, and the prose beside them says "119".
             Check(IniFile.ToRaw(factor.Decl, 119.0) == "119",
                   "a whole number writes without a decimal point");
 
+            // An unannotated INI is not a client.
             string plain = Path.Combine(dir, "Plain.ini");
             File.WriteAllLines(plain, new string[] { "[X]", "Key=1" });
             Check(IniFile.Read(plain) == null, "an unannotated INI is not listed as a client");
@@ -351,6 +403,12 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- the platform's own INI is annotated too ----
+        //
+        // CRANE's INI is generated from FirstRun.IniTemplate rather than shipped,
+        // so a typo in those annotations reaches users without any build step
+        // touching it. This is the only thing that reads the template the way the
+        // manager will.
         {
             Console.WriteLine();
             Console.WriteLine("== the generated CRANE INI ==");
@@ -369,14 +427,27 @@ internal static class TestManifest
             Check(writes != null && writes.Decl.Type == ParamType.Bool, "as a checkbox");
             Check(writes != null && writes.Decl.Group == "Safety", "under Safety");
 
+            // The shipped default is the whole safety story; build-asi.sh refuses
+            // to build if it is 1, and this asserts the same thing through the
+            // reader the manager actually uses.
             Check(self != null && self.Raw("Crane", "AllowWrites") == "0",
                   "and ships OFF");
 
+            // No @enable: CRANE has no enable key of its own, and inventing one
+            // would put a checkbox on the platform itself.
             Check(self != null && !self.HasEnable, "the host declares no enable key");
 
             Directory.Delete(dir, true);
         }
 
+        // ---- the same key in two sections ----
+        //
+        // This is the shape Beastly Hunger actually ships: Speed.Full under both
+        // [BeastlyHunger.MovementSpeed] and [BeastlyHunger.MeleeAttackSpeed],
+        // and the same for Damage.* and Penalty.*. The first version of this
+        // reader keyed on bare names and refused repeats as "ambiguous", which
+        // made fifteen of that mod's settings unmanageable. Repeating a name
+        // across sections is what sections are for.
         {
             Console.WriteLine();
             Console.WriteLine("== section-scoped keys ==");
@@ -414,6 +485,7 @@ internal static class TestManifest
             Check(movement.Decl.Max == 200 && attack.Decl.Max == 120,
                   "including its own bounds");
 
+            // The write must land in the named section and nowhere else.
             Check(IniFile.Write(path, "Mod.Attack", "Speed.Full", "118"),
                   "writing one section's copy succeeds");
             IniClient reread = IniFile.Read(path);
@@ -424,9 +496,12 @@ internal static class TestManifest
             Check(!IniFile.Write(path, "Mod.Nowhere", "Speed.Full", "1"),
                   "writing to a section that has no such key is refused");
 
+            // Section names cannot bleed into each other through the composite
+            // key: [A] BC and [AB] C must stay distinct.
             Check(IniClient.Slot("A", "BC") != IniClient.Slot("AB", "C"),
                   "section and key cannot run together into one identity");
 
+            // The explicit form, for INIs that gather declarations in one block.
             string explicitPath = Path.Combine(dir, "Explicit.ini");
             File.WriteAllLines(explicitPath, new string[]
             {
@@ -447,6 +522,14 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- launching through Steam ----
+        //
+        // Running the game exe directly stops at "Steam client application is
+        // required in order to play the game": it is DRM-wrapped and expects to
+        // have been started by Steam. Which route to take is decided by where
+        // the install sits, and getting that wrong fails silently in one
+        // direction -- steam://rungameid on a copy Steam does not know about
+        // produces no error and no game.
         {
             Console.WriteLine();
             Console.WriteLine("== steam launch detection ==");
@@ -471,6 +554,7 @@ internal static class TestManifest
             Check(!GameLaunch.IsSteamInstall(""), "an empty folder is not");
             Check(!GameLaunch.IsSteamInstall(null), "and neither is null");
 
+            // Which route, given where the game is and whether Steam is up.
             string steamGame = @"D:\SteamLibrary\steamapps\common\Dying Light The Beast\ph_ft\work\bin\x64";
             string otherGame = @"C:\Games\Dying Light The Beast\ph_ft\work\bin\x64";
 
@@ -490,6 +574,14 @@ internal static class TestManifest
             Check(env["SteamGameId"] == "3008130", "and SteamGameId alongside it");
         }
 
+        // ---- a stale status report is not a report ----
+        //
+        // Crane cannot write this file when the game is not running, so the file
+        // outliving the session is the normal case, not an edge case. Reading it
+        // without checking its age put a green "loaded" dot beside every script
+        // from the last session while the header bar correctly said the game was
+        // not running -- the window contradicting itself, in the reassuring
+        // direction.
         {
             Console.WriteLine();
             Console.WriteLine("== stale status reports ==");
@@ -504,10 +596,12 @@ internal static class TestManifest
             Check(fresh != null && fresh.StateOf("a.lua") == ScriptState.Loaded,
                   "and its states are read");
 
+            // Older than the window: the game has exited.
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow - StatusFile.Freshness - TimeSpan.FromMinutes(1));
             Check(!StatusFile.IsFresh(dir), "a report older than the window is not fresh");
             Check(StatusFile.Read(dir) == null, "and reads as no report at all");
 
+            // The boundary, from the safe side.
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow - StatusFile.Freshness + TimeSpan.FromSeconds(30));
             Check(StatusFile.IsFresh(dir), "just inside the window is still fresh");
 
@@ -517,6 +611,7 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- @param group= and desc= ----
         {
             Console.WriteLine();
             Console.WriteLine("== @param group and desc ==");
@@ -532,7 +627,8 @@ internal static class TestManifest
                 "-- @param loud bool default=false group=\"Timing\"",
                 "-- @param colour string default=red group=\"Looks\"",
                 "-- @param plain bool default=true",
-
+                // The trap: prose without quotes. Silently became "Speeds"
+                // before Tokenize started recording quoting.
                 "-- @param bare bool default=false desc=Speeds looting up considerably",
                 "-- @param bareg bool default=false group=Loot and Containers",
                 ""
@@ -556,6 +652,7 @@ internal static class TestManifest
             ParamDecl plain = ScriptHeader.Find(declared, "plain");
             Check(plain != null && plain.Group == "", "an ungrouped parameter has an empty group");
 
+            // The whole point of tracking quoting in Tokenize.
             ParamDecl bare = ScriptHeader.Find(declared, "bare");
             Check(bare != null && bare.Desc == "Speeds looting up considerably",
                   "an unquoted desc keeps every word");
@@ -563,6 +660,7 @@ internal static class TestManifest
             Check(bareg != null && bareg.Group == "Loot and Containers",
                   "an unquoted group keeps every word");
 
+            // A quoted value must not swallow the options after it.
             File.WriteAllText(script, string.Join("\n", new string[]
             {
                 "-- @param x number desc=\"Tuned.\" min=2 max=8 group=\"G\"",
@@ -575,6 +673,8 @@ internal static class TestManifest
                   "and the options after it still parse");
             Check(x != null && x.Group == "G", "including a later group");
 
+            // Unknown options are still ignored rather than failing the line --
+            // an older manager must not choke on a newer script.
             File.WriteAllText(script, "-- @param y bool default=true sparkle=yes group=\"G\"\n");
             ScriptHeader.Read(script, out gname, out gdesc, out declared);
             ParamDecl y = ScriptHeader.Find(declared, "y");
@@ -584,6 +684,13 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- the phantom-row invariant ----
+        //
+        // A row must always have a visible label, whatever state its entry is
+        // in. The bug this guards is a checkbox with nothing beside it: not
+        // merely ugly but unreportable, which is why it outlived two attempts
+        // at diagnosis. These cases construct the states the rest of the code
+        // says are impossible.
         {
             Console.WriteLine();
             Console.WriteLine("== rows always have a label ==");
@@ -595,6 +702,9 @@ internal static class TestManifest
             Check(!new ScriptRow(named, null, false).Unnamed,
                   "a named entry is not flagged unnamed");
 
+            // ScriptHeader.Read cannot leave this empty today. It is still the
+            // state to survive, because "cannot happen" is what the last two
+            // diagnoses assumed.
             ScriptEntry headerless = NewEntry("orphan.lua", false);
             ScriptRow headerlessRow = new ScriptRow(headerless, null, false);
             Check(headerlessRow.Name == "orphan.lua",
@@ -603,6 +713,7 @@ internal static class TestManifest
             Check(headerlessRow.Secondary.Contains("report"),
                   "and its second line asks for a report rather than going blank");
 
+            // The worst case: nothing to fall back to at all.
             ScriptEntry empty = NewEntry("", false);
             Check(new ScriptRow(empty, null, false).Name.Length > 0,
                   "an entry with neither name nor file still renders a label");

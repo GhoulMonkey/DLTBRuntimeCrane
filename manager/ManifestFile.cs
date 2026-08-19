@@ -1,3 +1,13 @@
+// DLTBRuntimeCrane.manifest.json reader and writer.
+//
+// This mirrors ManifestParse.h rather than using a general JSON library. The
+// manager must not accept a manifest that DLTBRuntimeCrane.asi will refuse: if
+// the tool writes a file the runtime rejects, the failure surfaces in the game
+// log instead of in the editor where it can be fixed.
+//
+// So the same rules apply on both sides -- known keys only, no duplicates, no
+// trailing content, and "file" must be a plain name inside scripts\.
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -14,11 +24,18 @@ namespace CraneManager
         public string Description { get; set; }
         public bool Missing { get; set; }
 
+        // What the runtime reported on its last reload. Distinct from Enabled --
+        // Enabled is what the user asked for, State is what actually happened.
         public ScriptState State { get; set; }
         public string StateError { get; set; }
 
+        // Stored values, keyed by parameter name. Values are double, bool or
+        // string -- the three the runtime parser accepts, and nothing else.
         public Dictionary<string, object> Params { get; set; }
 
+        // What the script itself declares, re-read from its header whenever the
+        // list refreshes. Not persisted: the script is the authority on which
+        // knobs exist, and the manifest only on what they are set to.
         public List<ParamDecl> Declared { get; set; }
 
         public ScriptEntry()
@@ -32,6 +49,11 @@ namespace CraneManager
             Declared = new List<ParamDecl>();
         }
 
+        // A stored value whose declaration has gone -- a knob renamed or removed
+        // in the script. Kept rather than dropped, and shown greyed: this is a
+        // tuning file for experiments, and silently discarding a number somebody
+        // chose is worse than showing one stale row. A typo in a declaration
+        // would otherwise destroy the value it was meant to name.
         public bool IsOrphan(string key)
         {
             return ScriptHeader.Find(Declared, key) == null;
@@ -47,8 +69,10 @@ namespace CraneManager
     {
         public const int MaxScripts = 64;
         public const int MaxNameLength = 128;
-
+        // Must match CRANE_MANIFEST_MAX_PARAMS in ManifestParse.h.
         public const int MaxParams = 16;
+
+        // ---------------- reading ----------------
 
         private class Reader
         {
@@ -124,6 +148,8 @@ namespace CraneManager
                 return false;
             }
 
+            // Mirrors manifest_params in ManifestParse.h: flat, three value
+            // types, bounded. The manager must not accept what the ASI refuses.
             public void Params(Dictionary<string, object> into)
             {
                 Expect('{');
@@ -182,6 +208,7 @@ namespace CraneManager
             }
         }
 
+        // Same containment rule as manifest_valid_name in ManifestParse.h.
         public static bool IsValidScriptName(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
@@ -255,6 +282,10 @@ namespace CraneManager
             return entries;
         }
 
+        // ---------------- writing ----------------
+
+        // Numbers are written round-trippably ("R"), because a value somebody
+        // tuned must come back as the number they set, not a rounding of it.
         private static string Literal(object value)
         {
             if (value is bool) return ((bool)value) ? "true" : "false";
@@ -275,6 +306,8 @@ namespace CraneManager
             return builder.ToString();
         }
 
+        // Written to be readable and diffable: the manifest stays hand-editable,
+        // which is what keeps this tool optional rather than required.
         public static string Write(IList<ScriptEntry> entries)
         {
             StringBuilder builder = new StringBuilder();
@@ -307,6 +340,8 @@ namespace CraneManager
 
         public static void Save(string path, IList<ScriptEntry> entries)
         {
+            // UTF-8 without a BOM: the runtime reads raw bytes and a BOM would
+            // land in front of the opening brace.
             File.WriteAllText(path, Write(entries), new UTF8Encoding(false));
         }
     }

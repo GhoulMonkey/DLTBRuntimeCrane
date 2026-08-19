@@ -1,3 +1,13 @@
+// CraneManager -- main window.
+//
+// Port of MainForm.cs from WinForms to WPF. The logic layer is unchanged:
+// ManifestFile, ScriptHeader, StatusFile and FirstRun are reused verbatim, and
+// only the presentation is rewritten.
+//
+// This first pass establishes the shell -- four bands, one split -- and enough
+// behaviour to prove the pipeline end to end. The list rows and the settings
+// pane follow.
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,7 +28,8 @@ namespace CraneManager
         private System.Windows.Threading.DispatcherTimer _settle;
         private System.Windows.Threading.DispatcherTimer _heartbeat;
         private DateTime _lastSelfWrite = DateTime.MinValue;
-
+        // Last known freshness of Crane's report, so the heartbeat can act on
+        // the change rather than rebuilding the list twice a second.
         private bool _reportWasFresh;
         private List<IniClient> _clients = new List<IniClient>();
 
@@ -56,6 +67,20 @@ namespace CraneManager
             StartWatching();
         }
 
+        /*
+         * Watches the folder, and separately ticks a clock.
+         *
+         * The WinForms window did this and the WPF port dropped it, which is how
+         * it came to report "Game: not running" with the game plainly running:
+         * everything was read once at startup and never again, so the window
+         * showed the world as it had been when it opened.
+         *
+         * The watcher covers changes on disk -- a script added, the manifest
+         * rewritten, a fresh status report. The heartbeat covers time passing,
+         * which no file event announces: "connected" is inferred from the status
+         * file's age, so it can stop being true without anything happening on
+         * disk.
+         */
         private void StartWatching()
         {
             _settle = new System.Windows.Threading.DispatcherTimer();
@@ -71,10 +96,23 @@ namespace CraneManager
             try
             {
                 Directory.CreateDirectory(Path.Combine(_folder, "scripts"));
-
+                // Two narrow watchers rather than one recursive one: Crane is
+                // installed in the game's own binary directory, which the game
+                // writes into constantly, and watching that recursively is a
+                // stream of events to discard.
                 _scriptWatcher = MakeWatcher(Path.Combine(_folder, "scripts"), "*.lua");
                 _configWatcher = MakeWatcher(_folder, "DLTBRuntimeCrane.*");
-
+                /*
+                 * The clients' own INIs, because several mods write to them
+                 * while you play.
+                 *
+                 * AutoSurvival's marker toggle says so in its own comments:
+                 * "Shift+Q or Select+RS changes this value immediately and
+                 * persists it here". Auto-Eat's level chord does the same. Any
+                 * of those left this window showing a value the file no longer
+                 * held, and the next edit here would have written the stale one
+                 * back over the user's in-game choice.
+                 */
                 _clientWatcher = MakeWatcher(_folder, "*.ini");
             }
             catch (Exception)
@@ -101,12 +139,15 @@ namespace CraneManager
         private void OnFileEvent(object sender, FileSystemEventArgs e)
         {
             string name = e.Name == null ? "" : e.Name;
-
+            // "DLTBRuntimeCrane.*" also matches the ASI, which changes only on a
+            // reinstall and is no reason to rebuild the list.
             if (name.EndsWith(".asi", StringComparison.OrdinalIgnoreCase)) return;
-
+            // Our own manifest writes come back as events. Ignoring a short
+            // window after one is cheaper than hashing the file to recognise it.
             if (name.EndsWith(".manifest.json", StringComparison.OrdinalIgnoreCase) &&
                 (DateTime.UtcNow - _lastSelfWrite).TotalMilliseconds < 1500) return;
-
+            // Same for a client INI this window just wrote. Without this, every
+            // value committed here would bounce straight back as a refresh.
             if (name.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) &&
                 (DateTime.UtcNow - _lastSelfWrite).TotalMilliseconds < 1500) return;
 
@@ -121,8 +162,20 @@ namespace CraneManager
             catch (Exception) { }
         }
 
+        /*
+         * The clock's job is to notice the game going away.
+         *
+         * A game that exits writes nothing, so no watcher fires and nothing
+         * would ever retract what the last report said. Rebuilding on every tick
+         * would fight the user -- it rebuilds the list twice a second while they
+         * are trying to click it -- so the rows are refreshed only on the edge,
+         * when the report crosses from current to stale or back.
+         */
         private void OnHeartbeat()
         {
+            // The same conjunction LoadMetadata uses. Keying the edge on file
+            // age alone would leave the dots lit for five minutes after the game
+            // exited, which is the bug this pass is fixing one layer up.
             bool fresh = GameLaunch.IsGameRunning() && StatusFile.IsFresh(_folder);
             UpdateConnection();
             if (fresh == _reportWasFresh) return;
@@ -141,6 +194,18 @@ namespace CraneManager
             UpdateConnection();
             UpdateSummary();
 
+            /*
+             * Re-show the selected client so a value changed outside this window
+             * appears here, rather than the pane keeping whatever it read when it
+             * was opened.
+             *
+             * Not while the user is editing. Rebuilding the pane replaces every
+             * control, which would take the caret out of a half-typed number and
+             * discard it -- and the commit happens on lost focus, so the value
+             * would vanish rather than be saved. If focus is inside the pane the
+             * refresh is skipped; the next change, or reselecting the row, picks
+             * it up.
+             */
             ClientRow chosen = ClientList.SelectedItem as ClientRow;
             if (chosen != null && !DetailHasFocus()) ShowClientDetail(chosen);
         }
@@ -161,11 +226,36 @@ namespace CraneManager
             return false;
         }
 
+        /*
+         * Rebuilds the row list, including scripts present in scripts\ that the
+         * manifest does not list.
+         *
+         * Unlisted scripts are shown but not written to the manifest until the
+         * user ticks one. Adding them on sight would fight Remove -- take a
+         * script out of the list and it would reappear on the next refresh -- so
+         * "present in the folder" and "listed" stay separate facts.
+         */
         private void BuildRows()
         {
             List<ScriptRow> rows = new List<ScriptRow>();
             foreach (ScriptEntry entry in _entries)
             {
+                /*
+                 * A script whose file is no longer in \scripts drops out of the
+                 * list rather than sitting there saying "Missing".
+                 *
+                 * The manifest entry is kept, and that distinction matters.
+                 * Scripts arrive by Vortex -- quick_hands.lua is deployed
+                 * from its own package -- so a purge or a redeploy makes the file
+                 * vanish through no decision of the user's. Pruning the entry
+                 * would take their tuned parameters with it, and they would come
+                 * back to a script reset to defaults with nothing to explain why.
+                 * Hiding the row costs nothing and the row returns, values intact,
+                 * the moment the file does.
+                 *
+                 * Deleting a script through the button does still remove the
+                 * entry, because that is something the user asked for.
+                 */
                 if (entry.Missing) continue;
                 rows.Add(new ScriptRow(entry, OnRowToggled, false));
             }
@@ -186,6 +276,9 @@ namespace CraneManager
                 rows.Add(new ScriptRow(entry, OnUnlistedToggled, true));
             }
 
+            // Keep the selection across a rebuild. Ticking a script rebuilds the
+            // list, and losing the detail pane at that moment is disorienting --
+            // the user was looking at that script when they acted on it.
             string wasSelected = null;
             ScriptRow previous = ScriptList.SelectedItem as ScriptRow;
             if (previous != null) wasSelected = previous.File;
@@ -203,6 +296,20 @@ namespace CraneManager
             BuildClientRows();
         }
 
+        /*
+         * Every annotated INI beside the ASI becomes a client row.
+         *
+         * Discovery is by annotation: any .ini here that declares something. A
+         * hardcoded list of known mods would defeat the point of putting the
+         * declarations in the INI, which is that a mod this manager has never
+         * heard of can opt in by shipping annotations, with no change here. An
+         * unannotated INI is skipped entirely rather than listed as
+         * unmanageable -- a row you cannot act on is clutter, and every game
+         * folder has INIs that are none of our business.
+         *
+         * Crane's own INI is excluded: it is the host rather than a client, and
+         * its settings live in the Settings window.
+         */
         private void BuildClientRows()
         {
             List<ClientRow> rows = new List<ClientRow>();
@@ -245,6 +352,11 @@ namespace CraneManager
                               " Takes effect when the mod next reads its INI.";
         }
 
+        /*
+         * The two lists share one detail pane, so selecting in one clears the
+         * other. Without that the pane shows a client while a script still looks
+         * selected, and the highlight points at something you are not editing.
+         */
         private void OnClientSelected(object sender, SelectionChangedEventArgs e)
         {
             ClientRow row = ClientList.SelectedItem as ClientRow;
@@ -263,6 +375,22 @@ namespace CraneManager
             catch (IOException) { return unlisted; }
             foreach (string path in files)
             {
+                /*
+                 * Belt and braces on the extension.
+                 *
+                 * Directory.GetFiles with a three-character extension pattern
+                 * also returns files whose extension merely BEGINS with it -- a
+                 * documented 8.3 leftover, the one where "*.xls" returns
+                 * book.xlsx. So "*.lua" would also return a hypothetical
+                 * something.luaX.
+                 *
+                 * It does NOT catch quick_hands.lua.vortex_backup, which Vortex
+                 * leaves in this folder: that file's extension is
+                 * .vortex_backup, and I initially and wrongly blamed it for
+                 * phantom rows. Checked against the real folder rather than
+                 * assumed. The guard stays because the quirk is real even though
+                 * this was not an instance of it.
+                 */
                 if (!string.Equals(Path.GetExtension(path), ".lua",
                                    StringComparison.OrdinalIgnoreCase)) continue;
                 string file = Path.GetFileName(path);
@@ -281,6 +409,8 @@ namespace CraneManager
             UpdateSummary();
         }
 
+        // Ticking an unlisted script is how it joins the list. The file turning
+        // up in the folder is not enough on its own.
         private void OnUnlistedToggled(ScriptRow row)
         {
             if (!row.Enabled) return;
@@ -304,16 +434,27 @@ namespace CraneManager
             }
         }
 
+        /*
+         * Accepts the game folder, not just the folder Crane happens to live in.
+         *
+         * The label says "Game folder", so it has to be true: Crane installs to
+         * ph_ft\work\bin\x64, several levels below anything a user would call
+         * their game folder. Asking for a path and then rejecting the obvious
+         * answer is no use to anyone, so the likely shapes are tried in turn.
+         *
+         * Returns "" when none of them holds a Crane install, which leaves the
+         * current folder untouched rather than pointing the window at nothing.
+         */
         private static string ResolveTyped(string typed)
         {
             if (typed.Length == 0) return "";
             string[] candidates = new string[]
             {
-                typed,
-                Path.Combine(typed, "ph_ft", "work", "bin", "x64"),
-                Path.Combine(typed, "work", "bin", "x64"),
-                Path.Combine(typed, "bin", "x64"),
-                Path.Combine(typed, "x64")
+                typed,                                                  // already the right folder
+                Path.Combine(typed, "ph_ft", "work", "bin", "x64"),     // the game folder
+                Path.Combine(typed, "work", "bin", "x64"),              // ph_ft
+                Path.Combine(typed, "bin", "x64"),                      // work
+                Path.Combine(typed, "x64")                              // bin
             };
             foreach (string candidate in candidates)
             {
@@ -329,6 +470,19 @@ namespace CraneManager
             return "";
         }
 
+        // ---------------- toolbar ----------------
+
+
+        /*
+         * Adding a script copies it into scripts\ and lists it disabled.
+         *
+         * Copied rather than referenced in place, because the manifest names
+         * scripts by plain filename and the runtime refuses anything with a
+         * path -- referencing a file elsewhere would need one. It arrives
+         * disabled because dropping a file in says nothing about whether it
+         * should run, and with writes enabled that distinction can cost you a
+         * save.
+         */
         private void OnAdd(object sender, RoutedEventArgs e)
         {
             if (!Ready()) return;
@@ -402,6 +556,12 @@ namespace CraneManager
             StatusText.Text = file + " added, disabled. Tick it to run it.";
         }
 
+        /*
+         * Reload re-reads from disk. It is not how a change takes effect -- every
+         * change saves immediately and Crane picks it up within a second -- and
+         * the UX review assumed otherwise from this button's old prominence,
+         * which is why it now sits in the toolbar with everything else.
+         */
         private void OnReload(object sender, RoutedEventArgs e)
         {
             if (!Ready()) return;
@@ -421,7 +581,22 @@ namespace CraneManager
                 StatusText.Text = GameLaunch.Executable + " is not in this folder, so there is nothing to launch.";
                 return;
             }
-
+            /*
+             * Through Steam when this is a Steam copy, never by running the exe.
+             *
+             * Starting DyingLightGame_TheBeast_x64_rwdi.exe directly gets as far
+             * as a dialog reading "Steam client application is required in order
+             * to play the game" and no further: the executable is DRM-wrapped and
+             * expects to have been started by Steam, which sets up an environment
+             * a plain CreateProcess does not. Setting the working directory --
+             * which the old code was careful about -- does not help, because the
+             * working directory was never the problem.
+             *
+             * The app id is a global Steam constant, the same on every install,
+             * and was read from this machine's own
+             * steamapps\appmanifest_3008130.acf ("Dying Light: The Beast") rather
+             * than guessed.
+             */
             GameLaunch.Route route =
                 GameLaunch.Plan(_folder, GameLaunch.IsSteamClientRunning());
             try
@@ -434,10 +609,16 @@ namespace CraneManager
                 {
                     System.Diagnostics.ProcessStartInfo start =
                         new System.Diagnostics.ProcessStartInfo(exe);
-
+                    // Games resolve data relative to the working directory;
+                    // inheriting this program's would be a subtle way to break a
+                    // launch that otherwise looks fine.
                     start.WorkingDirectory = _folder;
                     if (route == GameLaunch.Route.DirectWithSteamEnv)
                     {
+                        // Passing an environment requires UseShellExecute=false;
+                        // with it true the dictionary is silently ignored, which
+                        // would put us straight back to the DRM error with no
+                        // sign of why.
                         start.UseShellExecute = false;
                         GameLaunch.ApplySteamEnvironment(start.EnvironmentVariables);
                     }
@@ -455,7 +636,9 @@ namespace CraneManager
             }
             int enabled = 0;
             foreach (ScriptEntry entry in _entries) if (entry.Enabled) enabled++;
-
+            // Named as Steam's doing only when it is: that route takes several
+            // seconds and shows its own progress, so the wording has to explain
+            // the wait. The direct routes start immediately.
             StatusText.Text = string.Format(CultureInfo.InvariantCulture,
                 route == GameLaunch.Route.SteamUri
                     ? "Asked Steam to start, with {0} script(s) enabled. Steam has to start first."
@@ -469,6 +652,13 @@ namespace CraneManager
             return false;
         }
 
+        /*
+         * Moves the selected script within the manifest.
+         *
+         * Only listed entries move: an unlisted script has no manifest position
+         * to change, and giving it one would write it into the manifest as a side
+         * effect of pressing an arrow, which is not what the button says it does.
+         */
         private void MoveSelected(int delta)
         {
             ScriptRow row = ScriptList.SelectedItem as ScriptRow;
@@ -484,6 +674,9 @@ namespace CraneManager
             Save();
             BuildRows();
 
+            // Keep the moved script selected so a second press continues from
+            // where the first left off, rather than the selection staying put and
+            // the list appearing to move under it.
             foreach (object item in (System.Collections.IEnumerable)ScriptList.ItemsSource)
             {
                 ScriptRow candidate = item as ScriptRow;
@@ -496,6 +689,18 @@ namespace CraneManager
             UpdateSummary();
         }
 
+        /*
+         * Remove deletes the script file.
+         *
+         * It used to remove the manifest entry and leave the .lua, which made
+         * sense while the UI distinguished "listed" from "present". It does not
+         * any more: every script in \scripts is shown, so removing an entry
+         * would put the row straight back and Remove would appear to do nothing.
+         *
+         * Deleting is also what somebody means when they say remove this mod. It
+         * asks first, and it uses the word delete rather than hiding behind
+         * remove.
+         */
         private void RemoveSelected(ScriptRow row)
         {
             if (row == null) return;
@@ -528,12 +733,25 @@ namespace CraneManager
             RootScale.ScaleY = scale;
         }
 
+        /*
+         * Settings holds the plumbing the main window should not: where Crane is
+         * installed, and how large this window should be drawn. Both are things
+         * you set once and then stop thinking about, which is the test for
+         * belonging here rather than on the main surface.
+         */
         private void OnSettings(object sender, RoutedEventArgs e)
         {
             Window dialog = new Window();
             dialog.Title = "Settings";
             dialog.Owner = this;
-
+            /*
+             * Resizable, like the window it belongs to.
+             *
+             * SizeToContent plus NoResize was fine when this held two controls.
+             * It now carries the Bridge's twelve settings with wrapping
+             * descriptions, and a fixed dialog that decides its own height gets
+             * that wrong on some screens with no way for the user to correct it.
+             */
             dialog.ResizeMode = ResizeMode.CanResize;
             dialog.Width = 560;
             dialog.Height = 640;
@@ -544,11 +762,25 @@ namespace CraneManager
             StackPanel panel = new StackPanel();
             panel.Margin = new Thickness(16);
             panel.MinWidth = 460;
-
+            // The Bridge alone declares eleven settings, so this window can now
+            // be taller than a small screen. Capped and scrolled rather than
+            // left to SizeToContent, which would push the Close button off.
             ScrollViewer scroller = new ScrollViewer();
             scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             scroller.Content = panel;
 
+            /*
+             * The scale setting applies here too.
+             *
+             * The main window scales through one LayoutTransform on its root, and
+             * a dialog is a separate Window, so it never inherited it: somebody
+             * running the UI at 150% opened Settings and got a 100% dialog, which
+             * reads as the setting having stopped working.
+             *
+             * MaxHeight is applied in device-independent units before the
+             * transform, so it is divided by the scale; otherwise a scaled dialog
+             * would grow past the screen it was capped to fit.
+             */
             double zoom = Settings.LoadScale();
             scroller.LayoutTransform = new ScaleTransform(zoom, zoom);
 
@@ -566,7 +798,9 @@ namespace CraneManager
             folderHint.Style = (Style)FindResource("Subtle");
             folderHint.FontSize = 11;
             folderHint.Margin = new Thickness(0, 4, 0, 0);
-
+            // Editable, always. The WinForms window once shipped a read-only
+            // path box beside an unreachable Browse button, leaving that screen
+            // with no way in at all.
             panel.Children.Add(folderBox);
             panel.Children.Add(folderHint);
 
@@ -593,11 +827,25 @@ namespace CraneManager
                 double chosen = (int)item.Tag / 100.0;
                 ApplyScale(chosen);
                 Settings.SaveScale(chosen);
-
+                // Rescale the open dialog as well, so the change is visible where
+                // it is being made rather than only on the window behind it.
                 scroller.LayoutTransform = new ScaleTransform(chosen, chosen);
             };
             panel.Children.Add(scale);
 
+            /*
+             * The platform's own settings, so the tool never asks anybody to
+             * open an INI. CRANE's write switch in particular lived only in a
+             * text file, which made the one setting with real consequences the
+             * one setting the UI could not reach.
+             *
+             * One indented category per platform component. Flat, these ran to
+             * thirteen settings under headings that looked exactly like the
+             * group headings inside them, so "Console and log" and
+             * "DLTBRuntimeBridge" read as siblings when one contains the other.
+             * Nesting makes the ownership visible and lets somebody who came
+             * here to change one thing not scroll past the other twelve.
+             */
             foreach (string name in PlatformInis)
             {
                 IniClient platform = ReadPlatformIni(name);
@@ -616,6 +864,10 @@ namespace CraneManager
                 }
                 AppendSettings(platform, inner);
 
+                // Indented under its own heading rather than collapsed behind a
+                // control. Everything stays visible, and the indent is what says
+                // "Console and log" belongs to the Bridge rather than sitting
+                // beside it.
                 inner.Margin = new Thickness(14, 0, 0, 0);
 
                 TextBlock header = new TextBlock();
@@ -667,6 +919,18 @@ namespace CraneManager
             ShowDetail(chosen);
         }
 
+        /*
+         * Finds Crane relative to wherever this program was started.
+         *
+         * It deploys to ph_ft and Crane lives in ph_ft\work\bin\x64, one level
+         * down, and not beside the ASI: that folder's winmm.dll is Ultimate ASI
+         * Loader and Windows resolves a DLL from the executable's own directory
+         * first. A manager living there loads the loader, which injects every
+         * .asi into the manager.
+         *
+         * Own directory is still checked first, so a copy dropped straight into
+         * the Crane folder keeps working -- that is how the UI test sandbox runs.
+         */
         private static string ResolveDefaultFolder()
         {
             string here = Path.GetDirectoryName(
@@ -675,9 +939,9 @@ namespace CraneManager
             {
                 string[] relative = new string[]
                 {
-                    here,
-                    Path.Combine(here, "work", "bin", "x64"),
-                    Path.Combine(here, "ph_ft", "work", "bin", "x64")
+                    here,                                              // dropped in beside Crane
+                    Path.Combine(here, "work", "bin", "x64"),          // deployed to ph_ft
+                    Path.Combine(here, "ph_ft", "work", "bin", "x64")  // sitting at the game root
                 };
                 foreach (string candidate in relative)
                 {
@@ -717,6 +981,9 @@ namespace CraneManager
 
         private void LoadMetadata()
         {
+            // A report from a process that has exited describes nothing current,
+            // however recently it was written. The age check stays as well: the
+            // game can be running while Crane has not reported yet.
             StatusReport report = GameLaunch.IsGameRunning() ? StatusFile.Read(_folder) : null;
             foreach (ScriptEntry entry in _entries)
             {
@@ -742,10 +1009,36 @@ namespace CraneManager
             }
         }
 
+        /*
+         * "Game: Connected" answers the question the old window could not: is any
+         * of this reaching the game at all?
+         *
+         * Inferred from the status file's age, because Crane rewrites it on every
+         * reload and cannot write it when the game is not running. A stale file is
+         * therefore evidence of absence, and without this the user cannot tell a
+         * broken script from a game that is not running.
+         */
         private void UpdateConnection()
         {
             string status = Path.Combine(_folder, StatusFile.FileName);
-
+            /*
+             * Two facts, reported as three states, because conflating them is
+             * what made this wrong twice.
+             *
+             *   is the game running  -- the process. Ground truth.
+             *   has Crane reported   -- the status file's age.
+             *
+             * "Connected" was previously the second fact alone, so it went on
+             * claiming a connection for up to five minutes after the game had
+             * exited: a report written five seconds ago and a game that died
+             * four minutes ago are indistinguishable by age alone. Asking about
+             * the process makes the answer immediate and exact.
+             *
+             * The middle state earns its own wording rather than being folded
+             * into either neighbour, because between clicking Launch and Crane's
+             * first report there are several seconds in which neither "not
+             * running" nor "connected" is true.
+             */
             bool gameUp = GameLaunch.IsGameRunning();
             bool reporting = gameUp && StatusFile.IsFresh(_folder);
             ConnectionText.Text = reporting ? "Game: connected"
@@ -760,6 +1053,15 @@ namespace CraneManager
                 : (Brush)FindResource("StateIdle");
         }
 
+        /*
+         * The detail pane reads top to bottom like a document.
+         *
+         * Title, subtitle, prose, then a section heading, then settings in the
+         * settings-list idiom: label flush left, value flush right, description
+         * indented beneath. That is the inverse of the WinForms window, where
+         * labels were right-aligned in a column before their controls, and it is
+         * what makes a long list of settings scannable.
+         */
         private void ShowDetail(ScriptRow row)
         {
             Detail.Children.Clear();
@@ -776,12 +1078,16 @@ namespace CraneManager
             title.Style = (Style)FindResource("Title");
             Detail.Children.Add(title);
 
+            // The filename is implementation metadata. It belongs here, small,
+            // rather than taking up a column in the list.
             TextBlock file = new TextBlock();
             file.Text = entry.File;
             file.Foreground = (Brush)FindResource("InkFaint");
             file.Margin = new Thickness(0, 1, 0, 0);
             Detail.Children.Add(file);
 
+            // A failure goes above everything. Somebody whose script just failed
+            // does not want to tune it.
             if (entry.State == ScriptState.Failed && entry.StateError.Length > 0)
             {
                 Border alert = new Border();
@@ -813,6 +1119,24 @@ namespace CraneManager
                 return;
             }
 
+            /*
+             * Settings are grouped under the headings their author declared.
+             *
+             * Groups appear in order of first declaration rather than
+             * alphabetically. The author wrote them in an order, that order
+             * usually means something -- the main lever first, the fiddly bits
+             * after -- and sorting would throw away information the manager
+             * cannot recover. Same reason the script list is unsorted.
+             *
+             * Ungrouped settings keep the plain "Settings" heading and come
+             * first, so a script that declares no groups renders exactly as it
+             * did before this existed. Adding a grammar option must not change
+             * how existing scripts look.
+             */
+            // Built by hand rather than collected and sorted: List.Sort is
+            // introsort and is not stable, so a comparator that called two
+            // groups equal would be free to reorder them, silently undoing the
+            // declaration order this is trying to preserve.
             List<string> groups = new List<string>();
             foreach (ParamDecl decl in entry.Declared)
                 if (decl.Group.Length == 0) { groups.Add(""); break; }
@@ -832,6 +1156,8 @@ namespace CraneManager
                         Detail.Children.Add(SettingRow(entry, decl));
             }
 
+            // Pane-scoped, bottom right, per the mockup. Nearly free: the
+            // declared default is already parsed for every parameter.
             Button remove = new Button();
             remove.Content = "Delete script";
             remove.Padding = new Thickness(12, 4, 12, 4);
@@ -851,7 +1177,19 @@ namespace CraneManager
                 Save();
                 ShowDetail(ScriptList.SelectedItem as ScriptRow);
             };
-
+            /*
+             * Load order, restored.
+             *
+             * The WinForms window had Move up and Move down; the WPF port
+             * silently dropped them, and nothing noticed because order is
+             * invisible until two scripts want the same thing.
+             *
+             * Leases are exclusive per path, so when two enabled scripts claim
+             * one path the higher manifest entry wins and the lower is refused.
+             * Without these buttons the only way to decide which script wins was
+             * to hand-edit the manifest, which is the thing this tool exists to
+             * avoid.
+             */
             Button up = new Button();
             up.Content = "Move up";
             up.Padding = new Thickness(12, 4, 12, 4);
@@ -887,6 +1225,19 @@ namespace CraneManager
             Detail.Children.Add(actions);
         }
 
+        /*
+         * The client detail pane, in the same document shape as a script's.
+         *
+         * Two things are said here that are not said for a script, because they
+         * are true here and not there:
+         *
+         *   - the INI filename, because the user may well have edited this file
+         *     by hand and needs to know it is the same one;
+         *   - when a change takes effect. A Lua script reloads within a second;
+         *     a native client re-reads its INI on its own schedule, and several
+         *     only do so at startup. Implying otherwise would have people
+         *     changing a value and concluding the tool is broken.
+         */
         private void ShowClientDetail(ClientRow row)
         {
             Detail.Children.Clear();
@@ -920,6 +1271,15 @@ namespace CraneManager
                 return;
             }
 
+            /*
+             * The enable key gets a control even when the INI only marked it with
+             * @enable and never declared it as a @param.
+             *
+             * Removing the row checkbox would otherwise make a client's own off
+             * switch unreachable from the tool whose entire purpose is not having
+             * to open the file. Synthesised rather than required, so no INI can
+             * declare a switch this window cannot show.
+             */
             if (client.HasEnable &&
                 IniFile.Find(client, client.EnableSection, client.EnableKey) == null)
             {
@@ -938,6 +1298,18 @@ namespace CraneManager
             Detail.Children.Add(Muted("Changes are written straight to the INI. When they take effect is up to the mod -- some re-read while the game runs, some only at startup."));
         }
 
+        /*
+         * Renders a client's declared settings into any panel.
+         *
+         * Shared by the detail pane and the Settings window, because the Bridge
+         * and CRANE's own INIs are edited with exactly the same machinery as a
+         * client's. Only where they render differs: they are part of the
+         * platform rather than mods you install, so they belong under Settings
+         * rather than in a list of clients.
+         *
+         * Groups keep declaration order and the ungrouped-first bucket. See
+         * BuildRows' note on why nothing here is sorted.
+         */
         private void AppendSettings(IniClient client, Panel target)
         {
             List<string> groups = new List<string>();
@@ -960,12 +1332,36 @@ namespace CraneManager
             }
         }
 
+        /*
+         * The platform's own INIs: CRANE's and the Bridge's.
+         *
+         * Excluded from the Bridge-clients list because neither is a client. The
+         * Bridge is what clients load through, and CRANE is the tool's own
+         * runtime; listing either beside Time Lapse would say they are the same
+         * kind of thing.
+         */
         private static readonly string[] PlatformInis = new string[]
         {
             "DLTBRuntimeCrane.ini",
             "DLTBRuntimeBridge.ini",
         };
 
+        /*
+         * Reads a platform INI, supplying CRANE's own declarations in code.
+         *
+         * The Bridge's INI is packaged, so its annotations arrive with an update
+         * and reading them back is right. CRANE's is generated once on first run
+         * and never rewritten, so an install made before the annotations existed
+         * has a file that declares nothing, and the Settings window showed no
+         * CRANE section at all -- which is how "Allow scripts to change the
+         * game" came to be missing from a working install.
+         *
+         * Declaring it here rather than migrating the file: the manager ships
+         * with CRANE and always knows CRANE's own settings, so a round trip
+         * through the user's file buys nothing and rewriting their config to add
+         * comments is a side effect nobody asked for. The file's annotations stay
+         * in the template because they document the file for anyone reading it.
+         */
         private IniClient ReadPlatformIni(string name)
         {
             string path = Path.Combine(_folder, name);
@@ -1028,7 +1424,14 @@ namespace CraneManager
             FrameworkElement editor = MakeClientEditor(client, setting, current);
             editor.HorizontalAlignment = HorizontalAlignment.Right;
             editor.Margin = new Thickness(12, 0, 0, 0);
-
+            /*
+             * Read-only rather than hidden when the manager cannot safely write.
+             *
+             * Both cases are the mod author's mistake, not the user's, and both
+             * are worth seeing: a declared key missing from the file, and a key
+             * that appears twice so writing it would be a guess. Hiding the row
+             * would leave the user wondering where a documented setting went.
+             */
             if (declaredButAbsent) editor.IsEnabled = false;
             Grid.SetColumn(editor, 1);
             grid.Children.Add(editor);
@@ -1089,7 +1492,9 @@ namespace CraneManager
             text.MinWidth = 90;
             text.TextAlignment = TextAlignment.Right;
             text.Text = IniFile.ToRaw(decl, current);
-
+            // Committed on leaving the field rather than per keystroke: this
+            // writes to somebody else's config file, and "1" on the way to "119"
+            // is not a value anybody asked to store.
             text.LostFocus += delegate
             {
                 if (decl.Type != ParamType.Number) { CommitClient(client, setting, text.Text); return; }
@@ -1101,7 +1506,9 @@ namespace CraneManager
                     StatusText.Text = decl.Label + " must be a number; put back what it was.";
                     return;
                 }
-
+                // Bounds are the author's declaration, and the client enforces
+                // its own anyway -- so this clamps and says so rather than
+                // refusing, which would lose what the user was reaching for.
                 if (decl.HasMin && number < decl.Min) number = decl.Min;
                 if (decl.HasMax && number > decl.Max) number = decl.Max;
                 text.Text = IniFile.ToRaw(decl, number);
@@ -1151,10 +1558,22 @@ namespace CraneManager
             Grid.SetColumn(editor, 1);
             grid.Children.Add(editor);
 
+            // The range belongs under the field it constrains, not stranded in a
+            // far column. "on/off" is gone entirely: the checkbox says it.
             string range = decl.Type == ParamType.Number && (decl.HasMin || decl.HasMax)
                 ? string.Format(CultureInfo.InvariantCulture, "{0} to {1}", decl.Min, decl.Max)
                 : "";
 
+            /*
+             * One line under the control, carrying the description and the range
+             * together rather than stacking two faint lines.
+             *
+             * The description leads because it answers "what is this", which is
+             * the question somebody has before "what will it accept". The range
+             * follows in parentheses, and on its own when there is no
+             * description -- which is exactly what this line used to be, so
+             * scripts that declare no desc= look unchanged.
+             */
             string hint = decl.Desc;
             if (range.Length > 0)
                 hint = hint.Length > 0 ? hint + "  (" + range + ")" : range;
@@ -1203,7 +1622,9 @@ namespace CraneManager
             TextBox text = new TextBox();
             text.MinWidth = 90;
             text.TextAlignment = TextAlignment.Right;
-
+            // 25, not 25.000. A whole-number range gets no decimals at all; the
+            // old window hardcoded three for everything, which made a percentage
+            // read like a raw API value.
             text.Text = decl.Type == ParamType.Number
                 ? FormatNumber(Convert.ToDouble(current, CultureInfo.InvariantCulture), decl)
                 : Convert.ToString(current, CultureInfo.InvariantCulture);
@@ -1252,6 +1673,16 @@ namespace CraneManager
             return text;
         }
 
+        /*
+         * Counts the rows on screen, where a row means a file in \scripts.
+         *
+         * It counted manifest entries instead, so a list of four reported "2
+         * scripts ... 2 not yet configured", and an earlier version managed "1
+         * script - 0 enabled" beside a list of four. Both numbers were true and
+         * neither answered the user's question; whether a script has a manifest
+         * entry yet is the manager's own bookkeeping, and saying it out loud
+         * only invited the reader to wonder what it meant.
+         */
         private void UpdateSummary()
         {
             int total = 0, enabled = 0, failed = 0, reported = 0;

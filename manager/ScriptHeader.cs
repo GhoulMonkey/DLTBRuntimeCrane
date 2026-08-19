@@ -1,3 +1,36 @@
+// Reads a script's declared name, description and parameters.
+//
+// By parsing the file as text, never by running it. A manifest manager that
+// executed scripts to find out what they are would be running untrusted code
+// to decide whether the user wants to run it, which defeats the point of the
+// enable checkbox. Parameters do not change that: they are declared in comments
+// so this stays true.
+//
+// The convention is a comment header in the first few lines:
+//
+//   -- @name Hunger Curve Experiment
+//   -- @description Steepens drain above 60% for testing
+//   -- @param rate number default=1.5 min=0.5 max=4.0 label="Drain multiplier"
+//   -- @param loud bool default=false label="Log every change"
+//   -- @param mode enum values=slow|fast default=fast label="Curve shape"
+//
+// Key=value rather than positional. A positional grammar would be shorter and
+// would break the first time somebody omitted a field or added one.
+//
+// Two further options exist for presentation, and neither reaches the runtime:
+//
+//   group="Timing"   the heading this setting sits under in the manager
+//   desc="..."       a sentence shown beneath it
+//
+// They are here because the manager's job is to make opening a script in a text
+// editor unnecessary, and a bare list of eight labelled controls does not manage
+// that -- the user still has to read the source to learn what any of them mean
+// or which belong together. Group and desc move that knowledge into the UI.
+//
+// Crane never reads them, so a script must still supply its own fallback for
+// every value. Declarations are UI assistance and never a runtime trust
+// boundary -- the same distinction the Quick Hands port already turns on.
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -20,6 +53,14 @@ namespace CraneManager
         public object Default { get; set; }
         public List<string> Values { get; set; }
 
+        // Where this setting sits in the detail pane, and the sentence shown
+        // under it. Both are presentation only -- Crane never reads either, and
+        // a script must still supply its own fallback for every value.
+        //
+        // Group is a free string rather than a fixed vocabulary. The manager
+        // cannot know what a script's settings are about, and a closed list
+        // would mean every new script either misfiles its settings or waits for
+        // the manager to learn a new word.
         public string Group { get; set; }
         public string Desc { get; set; }
 
@@ -78,10 +119,20 @@ namespace CraneManager
             }
             catch (IOException)
             {
+                // An unreadable script is still listable; the runtime will say so.
             }
             if (name.Length == 0) name = Path.GetFileNameWithoutExtension(path);
         }
 
+        /*
+         * The @param grammar, exposed for annotated client INIs.
+         *
+         * The same parser rather than a second one that looks similar: a Lua
+         * script and an INI declare the same kinds of setting, and two grammars
+         * would drift the first time one gained an option. The
+         * caller strips its own comment marker -- "--" for Lua, ";" for INI --
+         * and hands over what follows "@param".
+         */
         public static ParamDecl ParseDeclaration(string text)
         {
             return ParseParam(text);
@@ -94,6 +145,7 @@ namespace CraneManager
             return null;
         }
 
+        // "rate number default=1.5 min=0.5 max=4.0 label=\"Drain multiplier\""
         private static ParamDecl ParseParam(string text)
         {
             List<Token> tokens = Tokenize(text);
@@ -113,13 +165,18 @@ namespace CraneManager
             }
 
             string rawDefault = null;
-
+            // Which text field an unquoted run of words is still filling. See
+            // the note on Tokenize: "desc=Speeds looting up" must not become
+            // "Speeds".
             string continuing = null;
             for (int i = 2; i < tokens.Count; i++)
             {
                 int eq = tokens[i].Text.IndexOf('=');
                 if (eq <= 0)
                 {
+                    // A bare word. It cannot be an option, so the old parser
+                    // dropped it on the floor; the only reading that means
+                    // anything is that it belongs to the text value before it.
                     if (continuing == null) continue;
                     if (continuing == "label") declared.Label += " " + tokens[i].Text;
                     else if (continuing == "desc") declared.Desc += " " + tokens[i].Text;
@@ -128,7 +185,8 @@ namespace CraneManager
                 }
                 string key = tokens[i].Text.Substring(0, eq).Trim().ToLowerInvariant();
                 string val = tokens[i].Text.Substring(eq + 1).Trim();
-
+                // A quoted value is complete by construction; only an unquoted
+                // one can have been cut short by a space.
                 continuing = tokens[i].Quoted ? null : key;
                 double number;
                 switch (key)
@@ -158,6 +216,9 @@ namespace CraneManager
             return declared;
         }
 
+        // A declared default is what a freshly added script starts with, so it
+        // has to be a usable value of the right type even when the declaration
+        // omitted it or spelt it wrong.
         private static object CoerceDefault(ParamDecl declared, string raw)
         {
             switch (declared.Type)
@@ -188,6 +249,18 @@ namespace CraneManager
             public bool Quoted;
         }
 
+        /*
+         * Splits on whitespace but keeps "quoted values" together, so a label or
+         * description can contain spaces.
+         *
+         * Whether a token was quoted is recorded, and that record earns its
+         * keep. The grammar's one sharp edge is that `desc=Speeds looting up`
+         * looks completely reasonable and silently means `desc=Speeds`, with the
+         * rest discarded -- and prose is the field an author is most likely to
+         * type without quotes, because prose does not look like a value. Knowing
+         * a value was unquoted is what lets ParseParam absorb the following
+         * words instead of dropping them.
+         */
         private static List<Token> Tokenize(string text)
         {
             List<Token> tokens = new List<Token>();
@@ -230,7 +303,7 @@ namespace CraneManager
             if (!trimmed.StartsWith(tag, StringComparison.OrdinalIgnoreCase)) return false;
             trimmed = trimmed.Substring(tag.Length);
             if (trimmed.Length > 0 && trimmed[0] != ' ' && trimmed[0] != '\t' && trimmed[0] != ':')
-                return false;
+                return false;   // @nameless must not match @name
             value = trimmed.TrimStart(' ', '\t', ':').Trim();
             return value.Length > 0;
         }
