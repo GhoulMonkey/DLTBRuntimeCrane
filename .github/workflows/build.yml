@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the same toolchain release the mod is built with locally,
+      # rather than the newest, so CI and local builds use one compiler version.
+      - name: Install LLVM-MinGW
+        shell: bash
+        run: |
+          tag=20260616
+          curl -sSLo llvm-mingw.zip \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/$tag/llvm-mingw-$tag-ucrt-x86_64.zip"
+          7z x -y llvm-mingw.zip -o/c/toolchains > /dev/null
+          echo "CLANG=/c/toolchains/llvm-mingw-$tag-ucrt-x86_64/bin/x86_64-w64-mingw32-clang.exe" >> "$GITHUB_ENV"
+
+      # Runs the pure-client gate and the 95 manifest parser checks on the way.
+      - name: Build DLTBRuntimeCrane.asi
+        shell: bash
+        working-directory: asi
+        run: ./build-asi.sh DLTBRuntimeCrane.asi
+
+      # Runs the manager unit tests and the startup selftest on the way.
+      - name: Build CraneManager.exe
+        shell: bash
+        working-directory: manager
+        run: ./build.sh
+
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp asi/DLTBRuntimeCrane.asi dist/
+          cp manager/bin/Release/CraneManager.exe dist/
+          cd dist && sha256sum * | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crane-binaries
+          path: dist/
+
+      # gh is preinstalled on the runner, so no third-party action is involved.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "CRANE $GITHUB_REF_NAME" \
+            --notes "Built from $GITHUB_SHA by GitHub Actions.
+
+          These binaries are compiled from this repository. They are not
+          byte-identical to the Nexus Mods download: the linker records the
+          build path, so the same source built elsewhere differs. Checksums for
+          what was built here are in SHA256SUMS.txt."
