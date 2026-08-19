@@ -1,0 +1,401 @@
+#ifndef DLTB_RUNTIME_BRIDGE_CLIENT_KIT_H
+#define DLTB_RUNTIME_BRIDGE_CLIENT_KIT_H
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "DLTBRuntimeBridgeAPI3.h"
+
+#define DLTBCK_EMBED_BUILD_VERSION(version_literal) \
+    __declspec(dllexport) const char DLTBClientBuildVersion[] = version_literal
+
+typedef struct dltbck_context {
+    const dltb_api *api;
+    dltb_client client;
+} dltbck_context;
+
+typedef struct dltbck_unregister_request {
+    const dltb_api *api;
+    dltb_client client;
+} dltbck_unregister_request;
+
+static __inline void dltbck_unregister_on_update(dltb_scope scope,
+                                                  void *opaque) {
+    dltbck_unregister_request *request =
+        (dltbck_unregister_request *)opaque;
+    (void)scope;
+    request->api->client->unregister_client(request->client);
+    HeapFree(GetProcessHeap(), 0, request);
+}
+
+static __inline dltb_status dltbck_request_unregister(
+    const dltbck_context *ctx) {
+    dltbck_unregister_request *request;
+    dltb_task task = DLTB_TASK_NONE;
+    dltb_scope current;
+    dltb_status status;
+    if (!ctx || !ctx->api || !ctx->client.id || !ctx->api->client ||
+        !ctx->api->client->unregister_client || !ctx->api->scope ||
+        !ctx->api->scope->current || !ctx->api->scope->schedule)
+        return DLTB_INVALID_ARGUMENT;
+    current = ctx->api->scope->current();
+    if (current & DLTB_SCOPE_ENGINE)
+        return ctx->api->client->unregister_client(ctx->client);
+    request = (dltbck_unregister_request *)HeapAlloc(
+        GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*request));
+    if (!request) return DLTB_NO_CAPACITY;
+    request->api = ctx->api;
+    request->client = ctx->client;
+    status = ctx->api->scope->schedule(
+        ctx->client, dltbck_unregister_on_update, request, &task);
+    if (status != DLTB_OK) HeapFree(GetProcessHeap(), 0, request);
+    return status;
+}
+
+static __inline void dltbck_say(const dltbck_context *ctx,
+                                dltb_log_class line_class,
+                                const char *message) {
+    if (ctx && ctx->api && ctx->api->log && ctx->api->log->write)
+        ctx->api->log->write(ctx->client, line_class, message);
+}
+
+static __inline void dltbck_sayf(const dltbck_context *ctx,
+                                 dltb_log_class line_class,
+                                 const char *format, ...) {
+    char message[512];
+    va_list args;
+    va_start(args, format);
+    _vsnprintf_s(message, sizeof(message), _TRUNCATE, format, args);
+    va_end(args);
+    dltbck_say(ctx, line_class, message);
+}
+
+static __inline dltb_status dltbck_report_loaded(
+    const dltbck_context *ctx, const char *summary) {
+    dltb_status status;
+    if (!ctx || !ctx->api || !ctx->api->client || !ctx->client.id ||
+        !DLTB_API3_DOMAIN_HAS(ctx->api->client, dltb_ns_client,
+                             report_loaded))
+        return DLTB_UNSUPPORTED;
+    status = ctx->api->client->report_loaded(ctx->client, summary);
+    if (status != DLTB_OK)
+        dltbck_sayf(ctx, DLTB_LOG_CLASS_ERROR,
+                    "startup completion report failed: %s",
+                    dltb_status_text(status));
+    return status;
+}
+
+static __inline int dltbck_read_log_level(const wchar_t *ini_path,
+                                          const wchar_t *section,
+                                          const wchar_t *key) {
+    wchar_t text[32];
+    wchar_t *end;
+    long value;
+    if (!GetPrivateProfileStringW(section, key, L"", text, _countof(text),
+                                  ini_path) ||
+        !text[0])
+        return (int)DLTB_LOG_INFO;
+    if (_wcsicmp(text, L"Off") == 0) return (int)DLTB_LOG_OFF;
+    if (_wcsicmp(text, L"Info") == 0 || _wcsicmp(text, L"Minimal") == 0)
+        return (int)DLTB_LOG_INFO;
+    if (_wcsicmp(text, L"Debug") == 0 || _wcsicmp(text, L"Normal") == 0)
+        return (int)DLTB_LOG_DEBUG;
+    if (_wcsicmp(text, L"Trace") == 0 || _wcsicmp(text, L"Verbose") == 0)
+        return (int)DLTB_LOG_TRACE;
+    value = wcstol(text, &end, 10);
+    while (*end == L' ' || *end == L'\t') ++end;
+    if (*end != L'\0' || value < (long)DLTB_LOG_OFF ||
+        value > (long)DLTB_LOG_TRACE)
+        return (int)DLTB_LOG_INFO;
+    return (int)value;
+}
+
+static __inline void dltbck_apply_log_level(const dltbck_context *ctx,
+                                            int level) {
+    if (ctx && ctx->api && ctx->api->log && ctx->api->log->set_level)
+        ctx->api->log->set_level(ctx->client, (dltb_log_level)level);
+}
+
+typedef struct dltbck_session_gate {
+    int was_playable;
+} dltbck_session_gate;
+
+#define DLTBCK_SESSION_GATE_INIT {-1}
+
+static __inline int dltbck_session_playable(const dltbck_context *ctx,
+                                            dltbck_session_gate *gate,
+                                            void (*on_leave)(void)) {
+    dltb_value value;
+    int playable;
+    memset(&value, 0, sizeof(value));
+    value.struct_bytes = (uint32_t)sizeof(value);
+    if (ctx->api->state->read(ctx->client, "session.playable",
+                              DLTB_SUBJECT_NONE, &value) != DLTB_OK ||
+        value.type != DLTB_T_BOOL)
+        return 0;
+    playable = value.num.boolean != 0;
+    if (playable != gate->was_playable) {
+        dltbck_say(ctx, DLTB_LOG_CLASS_DEBUG,
+                   playable ? "session playable; engaging"
+                            : "waiting: session not yet playable; all claims "
+                              "deferred");
+        if (!playable && gate->was_playable == 1 && on_leave) on_leave();
+        gate->was_playable = playable;
+    }
+    return playable;
+}
+
+static __inline int dltbck_payload_f32(const dltb_event *event,
+                                       const char *name, float *out) {
+    uint32_t index;
+    for (index = 0; index < event->payload_count; ++index) {
+        const dltb_named_value *field = &event->payload[index];
+        if (!field->name || strcmp(field->name, name) != 0) continue;
+        if (field->value.type == DLTB_T_F32) {
+            *out = field->value.num.f32;
+            return 1;
+        }
+        if (field->value.type == DLTB_T_I32 ||
+            field->value.type == DLTB_T_ENUM) {
+            *out = (float)field->value.num.i32;
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static __inline int dltbck_payload_i32(const dltb_event *event,
+                                       const char *name, int32_t *out) {
+    uint32_t index;
+    for (index = 0; index < event->payload_count; ++index) {
+        const dltb_named_value *field = &event->payload[index];
+        if (!field->name || strcmp(field->name, name) != 0) continue;
+        if (field->value.type == DLTB_T_I32 ||
+            field->value.type == DLTB_T_ENUM) {
+            *out = field->value.num.i32;
+            return 1;
+        }
+        if (field->value.type == DLTB_T_F32) {
+            *out = (int32_t)field->value.num.f32;
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+typedef enum dltbck_item_count_change {
+    DLTBCK_ITEM_COUNT_UNKNOWN = 0,
+    DLTBCK_ITEM_COUNT_UNCHANGED = 1,
+    DLTBCK_ITEM_COUNT_DECREASED = 2,
+    DLTBCK_ITEM_COUNT_INCREASED = 3
+} dltbck_item_count_change;
+
+static __inline dltbck_item_count_change
+dltbck_item_count_change_from_event(const dltb_event *event,
+                                    int32_t *before_out,
+                                    int32_t *after_out) {
+    int32_t before;
+    int32_t after;
+    if (!event || !dltbck_payload_i32(event, "count_before", &before) ||
+        !dltbck_payload_i32(event, "count_after", &after))
+        return DLTBCK_ITEM_COUNT_UNKNOWN;
+    if (before_out) *before_out = before;
+    if (after_out) *after_out = after;
+    if (after < before) return DLTBCK_ITEM_COUNT_DECREASED;
+    if (after > before) return DLTBCK_ITEM_COUNT_INCREASED;
+    return DLTBCK_ITEM_COUNT_UNCHANGED;
+}
+
+typedef struct dltbck_ini_watch {
+    FILETIME write_time;
+    FILETIME pending_write_time;
+    int write_time_valid;
+    int pending_valid;
+    ULONGLONG pending_since;
+    ULONGLONG next_check;
+} dltbck_ini_watch;
+
+static __inline int dltbck_ini_watch_time(const wchar_t *ini_path,
+                                          FILETIME *write_time) {
+    WIN32_FILE_ATTRIBUTE_DATA attributes;
+    if (!GetFileAttributesExW(ini_path, GetFileExInfoStandard, &attributes))
+        return 0;
+    *write_time = attributes.ftLastWriteTime;
+    return 1;
+}
+
+static __inline void dltbck_ini_watch_init(dltbck_ini_watch *watch,
+                                           const wchar_t *ini_path) {
+    memset(watch, 0, sizeof(*watch));
+    watch->write_time_valid =
+        dltbck_ini_watch_time(ini_path, &watch->write_time);
+    watch->next_check = GetTickCount64() + 500;
+}
+
+static __inline int dltbck_ini_changed(dltbck_ini_watch *watch,
+                                       const wchar_t *ini_path) {
+    FILETIME current;
+    ULONGLONG now = GetTickCount64();
+    if (now < watch->next_check) return 0;
+    watch->next_check = now + 250;
+    if (!dltbck_ini_watch_time(ini_path, &current)) return 0;
+    if (!watch->write_time_valid) {
+        watch->write_time = current;
+        watch->write_time_valid = 1;
+        return 0;
+    }
+    if (CompareFileTime(&current, &watch->write_time) == 0) {
+        watch->pending_valid = 0;
+        return 0;
+    }
+    if (!watch->pending_valid ||
+        CompareFileTime(&current, &watch->pending_write_time) != 0) {
+        watch->pending_write_time = current;
+        watch->pending_valid = 1;
+        watch->pending_since = now;
+        return 0;
+    }
+    if (now - watch->pending_since < 500) return 0;
+    watch->write_time = current;
+    watch->pending_valid = 0;
+    return 1;
+}
+
+typedef struct dltbck_param {
+    const char *path;
+    dltb_lease lease;
+    int held;
+    int has_written;
+    float written;
+    float baseline;
+    int baseline_valid;
+    int refused;
+} dltbck_param;
+
+#define DLTBCK_PARAM(name) {name, {0}, 0, 0, 0.0f, 0.0f, 0, 0}
+
+static __inline int dltbck_claim(const dltbck_context *ctx,
+                                 dltbck_param *param) {
+    dltb_value baseline;
+    dltb_status status;
+    if (param->held) return 1;
+    if (param->refused) return 0;
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.struct_bytes = (uint32_t)sizeof(baseline);
+    status = ctx->api->lease->claim(ctx->client, param->path,
+                                    DLTB_SUBJECT_NONE, &param->lease,
+                                    &baseline);
+    if (status != DLTB_OK) {
+        dltbck_sayf(ctx, DLTB_LOG_CLASS_WARN, "claim refused: %s status=%d",
+                    param->path, (int)status);
+        return 0;
+    }
+    param->held = 1;
+    param->has_written = 0;
+    param->baseline_valid = baseline.type == DLTB_T_F32;
+    param->baseline = param->baseline_valid ? baseline.num.f32 : 0.0f;
+    return 1;
+}
+
+static __inline dltb_status dltbck_refresh_baseline(
+    const dltbck_context *ctx, dltbck_param *param) {
+    dltb_value baseline;
+    dltb_status status;
+    if (!ctx || !ctx->api || !param || !param->held ||
+        !DLTB_API3_DOMAIN_HAS(ctx->api->lease, dltb_ns_lease, baseline))
+        return DLTB_UNSUPPORTED;
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.struct_bytes = (uint32_t)sizeof(baseline);
+    status = ctx->api->lease->baseline(param->lease, &baseline);
+    if (status != DLTB_OK) return status;
+    param->baseline_valid = baseline.type == DLTB_T_F32;
+    param->baseline = param->baseline_valid ? baseline.num.f32 : 0.0f;
+    param->has_written = 0;
+    return DLTB_OK;
+}
+
+static __inline int dltbck_write_value(const dltbck_context *ctx,
+                                       dltbck_param *param,
+                                       const dltb_value *value) {
+    dltb_status status;
+    if (param->refused) return 0;
+    if (!param->held && !dltbck_claim(ctx, param)) return 0;
+    status = ctx->api->lease->write(param->lease, value);
+    if (status != DLTB_OK) {
+        dltbck_sayf(ctx, DLTB_LOG_CLASS_WARN, "write refused: %s status=%d",
+                    param->path, (int)status);
+        return 0;
+    }
+    return 1;
+}
+
+static __inline int dltbck_write(const dltbck_context *ctx,
+                                 dltbck_param *param, float value,
+                                 float step) {
+    dltb_value wanted;
+    if (param->refused) return 0;
+    if (param->held && param->has_written && step > 0.0f) {
+        float delta = value - param->written;
+        if (delta < 0.0f) delta = -delta;
+        if (delta < step) return 1;
+    }
+    memset(&wanted, 0, sizeof(wanted));
+    wanted.struct_bytes = (uint32_t)sizeof(wanted);
+    wanted.type = DLTB_T_F32;
+    wanted.num.f32 = value;
+    if (!dltbck_write_value(ctx, param, &wanted)) return 0;
+    param->written = value;
+    param->has_written = 1;
+    return 1;
+}
+
+static __inline int dltbck_write_bool(const dltbck_context *ctx,
+                                      dltbck_param *param, int value) {
+    dltb_value wanted;
+    memset(&wanted, 0, sizeof(wanted));
+    wanted.struct_bytes = (uint32_t)sizeof(wanted);
+    wanted.type = DLTB_T_BOOL;
+    wanted.num.boolean = value ? 1u : 0u;
+    return dltbck_write_value(ctx, param, &wanted);
+}
+
+static __inline void dltbck_release(const dltbck_context *ctx,
+                                    dltbck_param *param) {
+    if (!param->held) return;
+    ctx->api->lease->release(param->lease);
+    param->held = 0;
+    param->has_written = 0;
+    param->baseline_valid = 0;
+}
+
+static __inline void dltbck_refuse(const dltbck_context *ctx,
+                                   dltbck_param *param) {
+    dltbck_release(ctx, param);
+    param->refused = 1;
+}
+
+static __inline int dltbck_claim_group(const dltbck_context *ctx,
+                                       dltbck_param **group, size_t count) {
+    size_t index;
+    for (index = 0; index < count; ++index) {
+        if (dltbck_claim(ctx, group[index])) continue;
+        while (index-- > 0) dltbck_release(ctx, group[index]);
+        return 0;
+    }
+    return 1;
+}
+
+static __inline void dltbck_release_group(const dltbck_context *ctx,
+                                          dltbck_param **group, size_t count) {
+    size_t index;
+    for (index = 0; index < count; ++index) dltbck_release(ctx, group[index]);
+}
+
+#endif

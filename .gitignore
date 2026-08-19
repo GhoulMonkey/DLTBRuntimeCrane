@@ -1,0 +1,13 @@
+*.asi
+*.exe
+*.dll
+*.obj
+*.lib
+*.pdb
+
+# Anchored to the build locations. Unanchored bin/ and build/ would also match
+# layout/ph_ft/work/bin, which is the installed file tree and must be published.
+/asi/build/
+/manager/bin/
+/manager/obj/
+/manager/build/

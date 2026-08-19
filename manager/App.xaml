@@ -1,0 +1,45 @@
+<Application x:Class="CraneManager.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+
+    <local:BrushLookupConverter x:Key="BrushLookup"
+        xmlns:local="clr-namespace:CraneManager"/>
+    <local:ShowIfConverter x:Key="ShowIf"
+        xmlns:local="clr-namespace:CraneManager"/>
+
+    <system:Double x:Key="GapTight"  xmlns:system="clr-namespace:System;assembly=mscorlib">4</system:Double>
+    <system:Double x:Key="Gap"       xmlns:system="clr-namespace:System;assembly=mscorlib">8</system:Double>
+    <system:Double x:Key="GapWide"   xmlns:system="clr-namespace:System;assembly=mscorlib">16</system:Double>
+
+    <SolidColorBrush x:Key="Ink"        Color="#1B1B1B"/>
+    <SolidColorBrush x:Key="InkMuted"   Color="#6B6B6B"/>
+    <SolidColorBrush x:Key="InkFaint"   Color="#9A9A9A"/>
+    <SolidColorBrush x:Key="Rule"       Color="#E2E2E2"/>
+    <SolidColorBrush x:Key="Surface"    Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="SurfaceAlt" Color="#F7F7F7"/>
+
+    <SolidColorBrush x:Key="StateGood"  Color="#2E7D32"/>
+    <SolidColorBrush x:Key="StateWarn"  Color="#B26A00"/>
+    <SolidColorBrush x:Key="StateBad"   Color="#B3261E"/>
+    <SolidColorBrush x:Key="StateIdle"  Color="#B0B0B0"/>
+
+    <Style x:Key="Title" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="15"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    </Style>
+
+    <Style x:Key="Subtle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource InkMuted}"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style x:Key="SectionHeading" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+      <Setter Property="Margin" Value="0,16,0,6"/>
+    </Style>
+
+  </Application.Resources>
+</Application>

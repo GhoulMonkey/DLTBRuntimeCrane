@@ -1,0 +1,66 @@
+CRANE 2.0.0 source
+==================
+
+Source for the two binaries in the CRANE download:
+
+  DLTBRuntimeCrane.asi   the Lua scripting host, an ABI 3 client of DLTBRuntimeBridge
+  CraneManager.exe       the script manager and settings editor
+
+Comments are stripped from asi/ and manager/. asi/vendor/ is Lua 5.4 as
+published, so it can be diffed against the release from lua.org.
+
+
+Build DLTBRuntimeCrane.asi
+--------------------------
+
+Requires:
+
+  LLVM-MinGW, clang targeting x86_64-w64-mingw32   https://github.com/mstorsjo/llvm-mingw
+  Python 3
+  bash (Git Bash is sufficient)
+
+Run:
+
+  cd asi
+  CLANG=/c/llvm-mingw/bin/x86_64-w64-mingw32-clang.exe ./build-asi.sh DLTBRuntimeCrane-2.0.0.asi
+
+
+Build CraneManager.exe
+----------------------
+
+Requires:
+
+  .NET Framework 4.8, present on Windows 10 and 11
+  .NET SDK 6 or newer, for the XAML compile
+  bash
+
+Run:
+
+  cd manager
+  ./build.sh
+
+The output is at manager/bin/Release/CraneManager.exe
+
+
+Installed layout
+----------------
+
+layout/ is the file tree as installed, relative to the game folder. Copy the two
+build outputs into it:
+
+  ph_ft/CraneManager.exe                              from manager/bin/Release/
+  ph_ft/work/bin/x64/DLTBRuntimeCrane.asi             from asi/
+  ph_ft/work/bin/x64/LICENSE-Lua.txt                  included
+  ph_ft/work/bin/x64/scripts/quick_hands.lua          included
+  ph_ft/work/bin/x64/DLTBRuntimeCrane.ini             included, see below
+  ph_ft/work/bin/x64/DLTBRuntimeCrane.manifest.json   included, see below
+
+The .ini and the .manifest.json are not in the released archive. CraneManager
+writes both on first run, from FirstRun.cs. The copies in layout/ are what it
+writes, so the tree can be assembled by hand. The manifest is an empty list.
+
+AllowWrites=0 in the .ini is the shipped default. Scripts may only read until it
+is set to 1.
+
+DLTBRuntimeCrane.asi requires DLTBRuntimeBridge 3.0.3-dev.2 or newer, which
+provides the ASI loader and the ABI 3 runtime.
