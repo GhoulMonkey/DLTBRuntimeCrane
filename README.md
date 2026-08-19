@@ -129,7 +129,7 @@ ships prebuilt. Build it here with `sdk/tools-source/build-checker.sh`, using th
 same LLVM-MinGW as the ASI, or install Lua 5.4 and `validate.ps1` falls back to
 `luac -p`. Metadata and parameter validation run without either.
 
-The SDK is newer than the rest of this repository and still under development.
+The SDK is no published and included in the release. It is still under development.
 The catalog under `sdk/schemas/` is an authoring aid; the installed Bridge is
 authoritative, and `bridge.describe` and `bridge.list` answer at runtime. Expect
-paths to be added to it.
+paths to be added to it as development continues.
