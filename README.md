@@ -15,7 +15,7 @@ shipped default is read-only.
 
 ## Downloads
 
-**[Latest release](https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest)**
+You can download the latest release from here: <https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest>
 
 Also on Nexus Mods, at <https://www.nexusmods.com/dyinglightthebeast/mods/973>.
 
