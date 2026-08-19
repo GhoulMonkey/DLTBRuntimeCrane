@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+
+- Ships the SDK inside the release archive, at `ph_ft/sdk/`, so one download
+  serves both players and script authors.
+
 ## 2.1.0
 
 - Adds `sdk/`, the script authoring kit: the Lua API reference, two templates,

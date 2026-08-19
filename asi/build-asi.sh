@@ -15,7 +15,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 bridge="include"
 clang="${CLANG:-x86_64-w64-mingw32-clang}"
-output="${1:-DLTBRuntimeCrane-2.1.0.asi}"
+output="${1:-DLTBRuntimeCrane-2.1.1.asi}"
 
 command -v "$clang" >/dev/null 2>&1 || [ -x "$clang" ] || {
     echo "error: LLVM-MinGW clang not found: $clang (set CLANG)" >&2; exit 1; }
