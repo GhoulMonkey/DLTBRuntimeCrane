@@ -16,13 +16,8 @@ shipped default is read-only.
 ## Downloads
 
 **[Latest release](https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest)**
--- the installable archive, built from the tagged source by GitHub Actions.
 
-Also on Nexus Mods, at
-<https://www.nexusmods.com/dyinglightthebeast/mods/973>. The two archives have
-the same layout and install the same way, but are not byte-identical: the
-linker records the build path, so the same source compiled on another machine
-produces different binaries.
+Also on Nexus Mods, at <https://www.nexusmods.com/dyinglightthebeast/mods/973>.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
