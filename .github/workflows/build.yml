@@ -61,6 +61,11 @@ jobs:
             & ./tools/validate.ps1 $bad.FullName -RequireSyntaxCheck
             if ($LASTEXITCODE -eq 0) { throw "invalid fixture was accepted: $($bad.Name)" }
           }
+          # Rejecting the last fixture is the pass condition, and it leaves
+          # $LASTEXITCODE at 1, which pwsh hands back as the step's status. The
+          # throws above are what fails this step.
+          Write-Host "SDK validation passed"
+          exit 0
 
       # Packaged by the project's own script, so the archive has the same layout
       # as the Nexus download rather than one assembled here.
