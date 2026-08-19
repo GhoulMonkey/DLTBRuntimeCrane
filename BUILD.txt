@@ -1,7 +1,7 @@
-CRANE 2.0.0 source
+DLTBRuntimeCrane 2.0.0 source
 ==================
 
-Source for the two binaries in the CRANE download:
+Source for the two binaries in the DLTBRuntimeCrane download:
 
   DLTBRuntimeCrane.asi   the Lua scripting host, an ABI 3 client of DLTBRuntimeBridge
   CraneManager.exe       the script manager and settings editor

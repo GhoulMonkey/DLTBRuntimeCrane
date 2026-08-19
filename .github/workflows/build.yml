@@ -82,5 +82,5 @@ jobs:
             "Built from source by GitHub Actions. The archive has the same layout as the Nexus Mods download and installs the same way, but is not byte-identical to it: the linker records the build path, so the same source compiled on another machine produces different binaries. Checksums for this build are in SHA256SUMS.txt." \
             >> notes.md
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "CRANE $GITHUB_REF_NAME" \
+            --title "DLTBRuntimeCrane $GITHUB_REF_NAME" \
             --notes-file notes.md
