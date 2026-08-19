@@ -37,17 +37,13 @@ DLTBRuntimeCrane does nothing on its own. It requires DLTBRuntimeBridge
 
 ## Downloads
 
-The published mod is on Nexus Mods:
+**[Latest release](https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest)**
+-- the installable archive, built from the tagged source by GitHub Actions.
 
-<https://www.nexusmods.com/dyinglightthebeast/mods/973>
-
-Each release here carries the same archive, built from the tagged source by
-GitHub Actions:
-
-<https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest>
-
-The two are not byte-identical, because the linker records the build path. The
-Nexus file is the published one; this repository exists so the code can be read
-and the binaries rebuilt by anyone who wants to.
+Also on Nexus Mods, at
+<https://www.nexusmods.com/dyinglightthebeast/mods/973>. The two archives have
+the same layout and install the same way, but are not byte-identical: the
+linker records the build path, so the same source compiled on another machine
+produces different binaries.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.

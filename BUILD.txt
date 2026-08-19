@@ -6,8 +6,8 @@ Source for the two binaries in the DLTBRuntimeCrane download:
   DLTBRuntimeCrane.asi   the Lua scripting host, an ABI 3 client of DLTBRuntimeBridge
   CraneManager.exe       the script manager and settings editor
 
-Comments are stripped from asi/ and manager/. asi/vendor/ is Lua 5.4 as
-published, so it can be diffed against the release from lua.org.
+asi/vendor/ is Lua 5.4 as published, so it can be diffed against the release
+from lua.org.
 
 
 Build DLTBRuntimeCrane.asi
