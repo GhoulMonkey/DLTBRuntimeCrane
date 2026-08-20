@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Startup
 -- @description Crane's default script: quiet, read-only, safe to leave enabled.
 --

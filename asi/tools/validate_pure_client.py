@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 import re, sys
 from pathlib import Path
 source = Path(sys.argv[1]).read_text(encoding='utf-8')

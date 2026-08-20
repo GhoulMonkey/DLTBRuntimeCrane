@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name My Configurable CRANE Mod
 -- @description A configurable, reversible lease example.
 -- @param enabled bool default=true group="General" label="Enabled"

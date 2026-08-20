@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // CraneManager -- main window.
 //
 // Port of MainForm.cs from WinForms to WPF. The logic layer is unchanged:

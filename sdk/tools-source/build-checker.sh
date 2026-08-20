@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Builds sdk/tools/crane-lua-check.exe, the Lua 5.4 syntax checker that
 # tools/validate.ps1 uses.
 #

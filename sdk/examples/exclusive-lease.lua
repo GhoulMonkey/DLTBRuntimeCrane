@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Reversible Interaction Scale
 -- @description Demonstrates one exclusive setting restored on reload or disable.
 -- @param scale number default=0.5 min=0 max=2 group="Tuning" label="Container hold scale"

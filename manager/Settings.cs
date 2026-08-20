@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Remembers which folder the manager was last pointed at.
 //
 // Its own file because it is shared: the WinForms window used it and the WPF

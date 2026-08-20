@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Reads a script's declared name, description and parameters.
 //
 // By parsing the file as text, never by running it. A manifest manager that

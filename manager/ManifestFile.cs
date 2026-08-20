@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // DLTBRuntimeCrane.manifest.json reader and writer.
 //
 // This mirrors ManifestParse.h rather than using a general JSON library. The

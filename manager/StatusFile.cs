@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Reads DLTBRuntimeCrane.status.json -- the runtime's report back.
 //
 // The manager writes the manifest and Crane reads it. This is the only channel

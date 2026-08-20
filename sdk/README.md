@@ -39,3 +39,18 @@ The bundled catalog is a development aid. The installed Bridge remains authorita
 use `bridge.describe`, `bridge.list` and ordinary error handling at runtime.
 
 Read `docs/QUICKSTART.md` next. `docs/CRANE-LUA-API.md` is the normative Lua reference.
+
+## License
+
+This kit is MIT licensed. See `LICENSE`. Scripts you write with it are yours,
+under whatever terms you choose, and nothing here asks for anything back.
+
+The kit is licensed separately from CRANE itself. `DLTBRuntimeCrane.asi` and
+`CraneManager.exe` are under the GNU General Public License version 3.0 only,
+which governs copies and forks of the host. The copyright holder grants that a
+script CRANE loads, and a client built against the MIT-licensed Bridge headers,
+are not derivative works of the host and carry no GPL obligation. Every file
+carries an `SPDX-License-Identifier` line naming its own terms.
+
+`LICENSES/` holds the licenses of third-party material shipped alongside, which
+is Lua 5.4 and nothing else so far.

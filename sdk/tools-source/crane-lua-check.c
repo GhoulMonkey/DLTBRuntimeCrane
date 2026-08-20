@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /* Syntax-only checker for the CRANE Script SDK.
  * Links the exact Lua parser sources used by CRANE, loads a chunk, never runs it.
  */

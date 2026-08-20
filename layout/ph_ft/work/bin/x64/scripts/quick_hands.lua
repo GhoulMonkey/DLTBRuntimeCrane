@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Quick Hands
 -- @description Shortens hold time for six separately configurable loot interaction classes.
 -- @param duration_percent number default=25 min=0 max=800 label="Hold time" group="Speed" desc="Percentage of the vanilla hold time, applied to every class ticked below. 100 is vanilla; lower is faster."

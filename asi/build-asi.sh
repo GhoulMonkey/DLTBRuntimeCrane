@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Builds DLTBRuntimeCrane.asi with LLVM-MinGW (clang targeting x86_64-w64-mingw32).
 #
 # Set CLANG to the compiler if it is not on PATH, e.g.

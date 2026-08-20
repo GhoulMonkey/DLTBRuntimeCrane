@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Creates the files Crane writes to, rather than shipping them.
 //
 // Why generate rather than package: Vortex owns every file it deploys, and a

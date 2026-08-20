@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Read Hunger State
 -- @description Logs hunger only when the observed value changes.
 

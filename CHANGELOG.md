@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Relicenses the scripting host and the manager under the GNU General Public
+  License version 3.0 only. A fork that gets distributed now comes with its
+  source, so the host cannot be closed and resold.
+- Keeps the script authoring kit, the Bridge client headers, and the example
+  and bundled Lua scripts under the MIT license, so what you build on CRANE
+  stays yours. Every source file names its own terms on an
+  `SPDX-License-Identifier` line.
+- Releases up to and including 2.1.1 remain MIT licensed for anyone who
+  received them.
+- Adds `LICENSE-CRANE.txt` and `SOURCE-CRANE.txt` to the release archive, so
+  the terms and the route to the source travel with the binaries.
+
 ## 2.1.1
 
 - Ships the SDK inside the release archive, at `ph_ft/sdk/`, so one download

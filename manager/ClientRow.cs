@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // One row in the Bridge-clients list.
 //
 // Sibling of ScriptRow and the same shape -- control, name, adaptive second

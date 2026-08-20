@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Crane -- optional Lua 5.4 developer client for DLTBRuntimeBridge ABI 3.
  *

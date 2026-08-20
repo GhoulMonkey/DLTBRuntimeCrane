@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // One row in the script list, shaped for the view rather than for storage.
 //
 // Each row is two lines: control and name, then a secondary line that adapts to

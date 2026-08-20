@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Hunger Drain Contribution
 -- @description Demonstrates a composable modifier contribution.
 -- @param multiplier number default=1 min=0 max=4 group="Tuning" label="Drain contribution"

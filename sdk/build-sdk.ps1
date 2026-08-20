@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 [CmdletBinding()]
 param([string]$Version = '2.0.0')
 $ErrorActionPreference = 'Stop'
@@ -7,7 +8,7 @@ $output = Join-Path $root 'package'
 $zipPath = Join-Path $output "CRANE-Script-SDK-$Version.zip"
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 
-$required = @('README.md','CHANGELOG.md','.luarc.json','LICENSES\Lua-5.4.txt','docs\QUICKSTART.md','docs\BRIDGE-CONCEPTS.md','docs\CRANE-LUA-API.md','library\crane.lua','templates','examples','tools\validate.ps1','tools\package.ps1','tools\crane-lua-check.exe','schemas\bridge-catalog.json','schemas\script-metadata.json')
+$required = @('README.md','CHANGELOG.md','.luarc.json','LICENSE','LICENSES\Lua-5.4.txt','docs\QUICKSTART.md','docs\BRIDGE-CONCEPTS.md','docs\CRANE-LUA-API.md','library\crane.lua','templates','examples','tools\validate.ps1','tools\package.ps1','tools\crane-lua-check.exe','schemas\bridge-catalog.json','schemas\script-metadata.json')
 foreach ($item in $required) { if (-not (Test-Path -LiteralPath (Join-Path $root $item))) { throw "Missing SDK input: $item" } }
 
 $craneSource = Get-Content -LiteralPath (Join-Path $root '..\asi\Crane.c') -Raw

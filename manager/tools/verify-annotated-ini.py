@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Mirrors IniFile.Read and reports what CraneManager will show.
 
 Written because a generated annotation can bind to nothing and look fine in the

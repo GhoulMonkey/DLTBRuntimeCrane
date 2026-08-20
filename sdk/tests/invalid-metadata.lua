@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Invalid Metadata Fixture
 -- @description Must be rejected because min is greater than max.
 -- @param scale number default=3 min=4 max=2

@@ -132,3 +132,43 @@ same LLVM-MinGW as the ASI, or install Lua 5.4 and `validate.ps1` falls back to
 The catalog under `sdk/schemas/` is an authoring aid; the installed Bridge is
 authoritative, and `bridge.describe` and `bridge.list` answer at runtime. Expect
 paths to be added to it as development continues.
+
+## License
+
+Two licenses, split along one line: the program is GPL, and the interface you
+build against is MIT.
+
+`DLTBRuntimeCrane.asi` and `CraneManager.exe` — everything under `asi/`,
+`manager/` and `tools/` — are licensed under the GNU General Public License
+version 3.0 only. Fork it, repair it, improve it, sell it if you like; if you
+distribute a modified version, its recipients get the same source and the same
+rights. See `LICENSE`.
+
+What a script or client author copies from is MIT licensed, so a mod built on
+CRANE carries no obligation back:
+
+| | |
+|---|---|
+| `sdk/` | the script authoring kit — `sdk/LICENSE` |
+| `asi/include/` | the Bridge's public client headers — `asi/include/LICENSE` |
+| `asi/examples/`, `asi/scripts/` | the example Lua scripts, and the bundled one |
+
+Every source file carries an `SPDX-License-Identifier` line naming which of the
+two applies, so a header or an example stays labelled after somebody copies it
+out of the tree.
+
+The copyright holder grants that a script CRANE loads, and a client built
+against the MIT-licensed Bridge headers, are not derivative works of the host
+and carry no GPL obligation. The GPL is here to keep forks of the host open,
+and it stops there.
+
+`asi/vendor/` is Lua 5.4 under its own MIT license, kept at
+`asi/vendor/LICENSE.txt`.
+
+Releases up to and including 2.1.1 were published under the MIT license. That
+grant still stands for anyone who received one of those versions. Later
+releases are under the GPL.
+
+The source corresponding to any released binary is the commit tagged with that
+version in this repository. Release archives name the tag in
+`SOURCE-CRANE.txt`.

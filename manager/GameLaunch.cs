@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // How the Launch button starts the game.
 //
 // Separate from the window because it is the only part of launching that can be

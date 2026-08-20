@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Reads and edits an annotated client INI.
 //
 // The other half of the manager's job. Crane's own scripts declare their

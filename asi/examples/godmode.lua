@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name God Mode (example)
 -- @description Leases damage multipliers so damage taken drops to nothing. Released on reload or disable.
 -- @param incoming number default=-0.9 min=-1.0 max=0.0 label="Incoming damage" group="Damage" desc="Added to the incoming multiplier. -1.0 is immunity; -0.9 leaves a tenth getting through."

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Round-trip and agreement tests for the manager's manifest handling.
 //
 // The property under test is that the manager and the runtime agree, rather than

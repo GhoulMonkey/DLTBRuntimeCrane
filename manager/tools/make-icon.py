@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Generates CraneManager.ico (and PNG previews) with no third-party deps.
 
 A tower crane, because the mod is called CRANE and a silhouette is the one kind

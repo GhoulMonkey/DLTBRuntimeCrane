@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Crane manifest reader -- DLTBRuntimeCrane.manifest.json.
  *

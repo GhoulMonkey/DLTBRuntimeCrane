@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 ---@meta CRANE
 
 ---@alias CraneValue boolean|integer|number|string

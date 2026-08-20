@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name My CRANE Mod
 -- @description A quiet read-only starting point.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Two tiny converters the row template needs.
 //
 // A row binds a brush by name rather than by value, so the state vocabulary

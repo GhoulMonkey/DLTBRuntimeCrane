@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Version resource for CraneManager.exe.
 //
 // The binary previously shipped with an entirely empty version resource -- no

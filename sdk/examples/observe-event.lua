@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- @name Observe Item Use
 -- @description Logs completed native item uses without changing them.
 
