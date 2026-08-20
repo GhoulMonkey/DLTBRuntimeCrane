@@ -43,7 +43,7 @@ Read `docs/QUICKSTART.md` next. `docs/CRANE-LUA-API.md` is the normative Lua ref
 ## License
 
 This kit is MIT licensed. See `LICENSE`. Scripts you write with it are yours,
-under whatever terms you choose, and nothing here asks for anything back.
+under whatever terms you choose.
 
 The kit is licensed separately from CRANE itself. `DLTBRuntimeCrane.asi` and
 `CraneManager.exe` are under the GNU General Public License version 3.0 only,
@@ -52,5 +52,5 @@ script CRANE loads, and a client built against the MIT-licensed Bridge headers,
 are not derivative works of the host and carry no GPL obligation. Every file
 carries an `SPDX-License-Identifier` line naming its own terms.
 
-`LICENSES/` holds the licenses of third-party material shipped alongside, which
-is Lua 5.4 and nothing else so far.
+`LICENSES/` holds the licenses of third-party material shipped alongside,
+currently Lua 5.4 only.

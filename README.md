@@ -135,17 +135,15 @@ paths to be added to it as development continues.
 
 ## License
 
-Two licenses, split along one line: the program is GPL, and the interface you
-build against is MIT.
+CRANE is published under two licenses: the GPL for the host, MIT for the
+interface authors build against.
 
 `DLTBRuntimeCrane.asi` and `CraneManager.exe` — everything under `asi/`,
-`manager/` and `tools/` — are licensed under the GNU General Public License
-version 3.0 only. Fork it, repair it, improve it, sell it if you like; if you
-distribute a modified version, its recipients get the same source and the same
-rights. See `LICENSE`.
+`manager/` and `tools/` — are under the GNU General Public License version 3.0
+only. See `LICENSE`. Distributing a modified version means distributing its
+source under the same terms; selling it is permitted.
 
-What a script or client author copies from is MIT licensed, so a mod built on
-CRANE carries no obligation back:
+These are MIT licensed instead, being what a script or client author copies:
 
 | | |
 |---|---|
@@ -153,22 +151,21 @@ CRANE carries no obligation back:
 | `asi/include/` | the Bridge's public client headers — `asi/include/LICENSE` |
 | `asi/examples/`, `asi/scripts/` | the example Lua scripts, and the bundled one |
 
+A script or client built on CRANE is yours to license as you choose.
+
 Every source file carries an `SPDX-License-Identifier` line naming which of the
-two applies, so a header or an example stays labelled after somebody copies it
-out of the tree.
+two applies, so a file stays labelled once it is copied out of the tree.
 
 The copyright holder grants that a script CRANE loads, and a client built
 against the MIT-licensed Bridge headers, are not derivative works of the host
-and carry no GPL obligation. The GPL is here to keep forks of the host open,
-and it stops there.
+and carry no GPL obligation.
 
-`asi/vendor/` is Lua 5.4 under its own MIT license, kept at
+`asi/vendor/` is Lua 5.4 under its own MIT license, at
 `asi/vendor/LICENSE.txt`.
 
-Releases up to and including 2.1.1 were published under the MIT license. That
-grant still stands for anyone who received one of those versions. Later
-releases are under the GPL.
+Releases up to and including 2.1.1 were published under the MIT license, and
+that grant still stands for anyone who received one. Later releases are under
+the GPL.
 
-The source corresponding to any released binary is the commit tagged with that
-version in this repository. Release archives name the tag in
-`SOURCE-CRANE.txt`.
+The source for any released binary is the commit tagged with that version.
+Release archives name the tag in `SOURCE-CRANE.txt`.

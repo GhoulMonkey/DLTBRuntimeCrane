@@ -75,20 +75,20 @@ that build them, is published at:
 
     %s
 
-at the commit tagged v%s. The repository is public: downloading it costs
-nothing and needs no account.
+at the commit tagged v%s. The repository is public; no charge or account is
+required to download it.
 
 Not everything is under the GPL. The script authoring kit, the Bridge client
 headers it documents, and the example and bundled Lua scripts are MIT licensed,
-so a script or client built on CRANE carries no obligation back. Each source
-file names its own terms on an SPDX-License-Identifier line.
+and may be used in a script or client under any terms. Each source file names
+its own terms on an SPDX-License-Identifier line.
 
 Lua 5.4 is statically linked under its own MIT license; see LICENSE-Lua.txt.
 """
 
 
 def source_notice(version):
-    """The GPL section 6 directions, travelling with the binaries they describe."""
+    """The GPL section 6 directions, shipped alongside the binaries."""
     return SOURCE_NOTICE % (version, REPOSITORY, version)
 
 
@@ -101,9 +101,9 @@ def main(argv):
     payload = [
         (asi, BASE + "DLTBRuntimeCrane.asi"),
         (manager, MANAGER_BASE + "CraneManager.exe"),
-        # The GPL covers both binaries, and section 6 wants its terms and a route
-        # to the corresponding source travelling with the object code rather than
-        # living only on a mod page somebody may never read.
+        # The GPL covers both binaries. Section 6 requires its terms and the
+        # location of the corresponding source to accompany the object code, so
+        # both ship inside the archive rather than on the mod page.
         (gpl_license, BASE + "LICENSE-CRANE.txt"),
         (lua_license, BASE + "LICENSE-Lua.txt"),
         # The one bundled script, into the folder CRANE already scans. It is the
