@@ -18,7 +18,7 @@ file and Crane Manager shows it disabled until the user enables it.
 
 Do not package:
 
-- `DLTBRuntimeCrane.asi`, `CraneManager.exe` or any CRANE config/status/manifest file;
+- `DLTBRuntimeCrane.asi`, `CraneLoader.exe` or any CRANE config/status/manifest file;
 - `DLTBRuntimeBridge.asi` or native Bridge headers;
 - an ASI loader;
 - SDK editor definitions, docs or validation tools;

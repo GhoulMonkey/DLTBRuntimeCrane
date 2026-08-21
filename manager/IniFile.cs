@@ -68,7 +68,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 
-namespace CraneManager
+namespace CraneLoader
 {
     // One declared setting, and the section its key lives in.
     public class IniSetting

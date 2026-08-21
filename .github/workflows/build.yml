@@ -35,7 +35,7 @@ jobs:
         run: ./build-asi.sh DLTBRuntimeCrane.asi
 
       # Runs the manager unit tests and the startup selftest on the way.
-      - name: Build CraneManager.exe
+      - name: Build CraneLoader.exe
         shell: bash
         working-directory: manager
         run: ./build.sh
@@ -89,7 +89,7 @@ jobs:
           mkdir -p dist
           python tools/make_package.py "dist/DLTBRuntimeCrane-$version.zip" \
             asi/DLTBRuntimeCrane.asi \
-            manager/bin/Release/CraneManager.exe \
+            manager/bin/Release/CraneLoader.exe \
             asi/vendor/LICENSE.txt \
             layout/ph_ft/work/bin/x64/scripts/quick_hands.lua \
             sdk

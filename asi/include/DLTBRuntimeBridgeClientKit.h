@@ -237,6 +237,139 @@ static __inline int dltbck_session_playable(const dltbck_context *ctx,
 }
 
 /* ------------------------------------------------------------------------- */
+/* Subject handles that survive a stale one                                   */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Resolve a subject once, and re-resolve it when the Bridge rejects it.
+ *
+ * A subject handle carries a generation and stays valid for as long as the
+ * thing it names does. Across a state transition it can stop matching, and a
+ * client that resolved once and cached the result has no reason to ask again,
+ * so every later call fails against the same dead handle.
+ *
+ * `dltbck_subject_hold` resolves on first use and after any invalidation.
+ * `dltbck_subject_failed` invalidates the handle when a status means the handle
+ * itself was the problem, so the next tick re-resolves. Callers pass every
+ * failed status through it and need no opinion about which ones mean stale.
+ */
+typedef struct dltbck_subject_ref {
+    dltb_subject subject;
+    int resolved;
+} dltbck_subject_ref;
+
+#define DLTBCK_SUBJECT_REF_INIT {{0}, 0}
+
+static __inline int dltbck_subject_hold(const dltbck_context *ctx,
+                                        dltbck_subject_ref *ref,
+                                        const char *path) {
+    if (ref->resolved) return 1;
+    if (!ctx || !ctx->api || !ctx->api->state || !ctx->api->state->resolve)
+        return 0;
+    if (ctx->api->state->resolve(ctx->client, path, &ref->subject) != DLTB_OK)
+        return 0;
+    ref->resolved = 1;
+    return 1;
+}
+
+static __inline void dltbck_subject_invalidate(dltbck_subject_ref *ref) {
+    ref->subject = DLTB_SUBJECT_NONE;
+    ref->resolved = 0;
+}
+
+/*
+ * Returns 1 if the handle was dropped, so a caller can log the re-resolution
+ * rather than silently papering over a transition it might want to know about.
+ */
+static __inline int dltbck_subject_failed(dltbck_subject_ref *ref,
+                                          dltb_status status) {
+    /* DLTB_NO_SUBJECT belongs here: a handle can decode cleanly and still
+       resolve to a pointer that is gone, which is re-resolvable too. */
+    if (status != DLTB_STALE_SUBJECT && status != DLTB_NO_SUBJECT &&
+        status != DLTB_INVALID_ARGUMENT && status != DLTB_NOT_OWNER)
+        return 0;
+    dltbck_subject_invalidate(ref);
+    return 1;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Edge-triggered condition reporting                                         */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Report a condition once when it starts, again when it changes, again while it
+ * persists, and once when it clears.
+ *
+ * Three clients each wrote their own `if (already_said) return;` latch with no
+ * path back, so a feature that failed once reported once and then failed
+ * silently for the rest of the process. A caller in a tick loop needs all four
+ * of the transitions above; a bare latch gives only the first.
+ *
+ * `reason` is any nonzero client-defined code; 0 means healthy. A client with
+ * one failure mode passes 1.
+ */
+typedef struct dltbck_reporter {
+    int reason;              /* 0 = healthy */
+    ULONGLONG repeat_at;     /* 0 = say the next failure immediately */
+} dltbck_reporter;
+
+#define DLTBCK_REPORTER_INIT {0, 0}
+
+/* Long enough that a persistent outage is a line a minute rather than two a
+   second; short enough that somebody reading the tail of a log still sees it. */
+#define DLTBCK_REPORT_REPEAT_MS 60000
+
+/*
+ * Report a failure. Says on entry, on any change of reason, and every
+ * DLTBCK_REPORT_REPEAT_MS while the same reason persists. Returns 1 if it
+ * spoke, so a caller can attach a one-off detailed trace to the same moment.
+ */
+static __inline int dltbck_report_failure(const dltbck_context *ctx,
+                                          dltbck_reporter *reporter,
+                                          int reason,
+                                          dltb_log_class line_class,
+                                          const char *message) {
+    ULONGLONG now = GetTickCount64();
+    if (reason == 0) reason = 1;
+    if (reason == reporter->reason && now < reporter->repeat_at) {
+        return 0;
+    }
+    dltbck_say(ctx, line_class, message);
+    reporter->reason = reason;
+    reporter->repeat_at = now + DLTBCK_REPORT_REPEAT_MS;
+    return 1;
+}
+
+/*
+ * Report that the condition cleared. Says only if it had been failing, so the
+ * healthy path costs nothing and never speaks. Returns 1 if it spoke.
+ */
+static __inline int dltbck_report_recovered(const dltbck_context *ctx,
+                                            dltbck_reporter *reporter,
+                                            dltb_log_class line_class,
+                                            const char *message) {
+    if (reporter->reason == 0) return 0;
+    dltbck_say(ctx, line_class, message);
+    reporter->reason = 0;
+    reporter->repeat_at = 0;
+    return 1;
+}
+
+/*
+ * Forget what was said, so the next failure reports immediately even if it is
+ * the same reason.
+ *
+ * This is the call the three hand-rolled latches were all missing. Use it where
+ * the player has just done something that entitles them to an answer -- a
+ * feature toggle, a config reload, a new session -- because "I pressed the
+ * button and nothing was logged" is indistinguishable from a dead client.
+ */
+static __inline void dltbck_report_forget(dltbck_reporter *reporter) {
+    reporter->reason = 0;
+    reporter->repeat_at = 0;
+}
+
+/* ------------------------------------------------------------------------- */
 /* Event payloads                                                             */
 /* ------------------------------------------------------------------------- */
 

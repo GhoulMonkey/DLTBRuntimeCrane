@@ -46,7 +46,7 @@ This kit is MIT licensed. See `LICENSE`. Scripts you write with it are yours,
 under whatever terms you choose.
 
 The kit is licensed separately from CRANE itself. `DLTBRuntimeCrane.asi` and
-`CraneManager.exe` are under the GNU General Public License version 3.0 only,
+`CraneLoader.exe` are under the GNU General Public License version 3.0 only,
 which governs copies and forks of the host. The copyright holder grants that a
 script CRANE loads, and a client built against the MIT-licensed Bridge headers,
 are not derivative works of the host and carry no GPL obligation. Every file

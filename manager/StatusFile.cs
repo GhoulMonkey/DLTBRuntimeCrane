@@ -20,7 +20,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public enum ScriptState { Unknown, Disabled, Loaded, Missing, Failed }
 

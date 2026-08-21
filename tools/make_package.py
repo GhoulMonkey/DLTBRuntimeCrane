@@ -9,13 +9,13 @@ Usage: make_package.py <zip> <version> <asi> <manager-exe> <gpl-license>
                        <lua-license> <script> [sdk-dir]
 
 The archive carries only files nothing ever writes to. DLTBRuntimeCrane.ini,
-DLTBRuntimeCrane.manifest.json and scripts\\*.lua are created by CraneManager on
+DLTBRuntimeCrane.manifest.json and scripts\\*.lua are created by CraneLoader on
 first run rather than packaged, so a mod manager never owns a user's script list
 or tuned parameters.
 
 An sdk-dir is added under ph_ft/sdk/, so the release is one download for players
 and script authors alike. Those files are inert: nothing loads them, and they sit
-beside CraneManager rather than in the game root.
+beside CraneLoader rather than in the game root.
 """
 
 import pathlib
@@ -30,14 +30,14 @@ BASE = "ph_ft/work/bin/x64/"
 SDK_BASE = "ph_ft/sdk/"
 SDK_SKIP_DIRS = {"package"}
 
-# CraneManager deploys to ph_ft, NOT beside the ASI.
+# CraneLoader deploys to ph_ft, NOT beside the ASI.
 #
 # winmm.dll in ph_ft/work/bin/x64 is Ultimate ASI Loader, not Windows'. Windows
 # resolves a DLL from the executable's own directory first, and WPF loads winmm
 # for timing -- so a manager sitting in that folder loads the ASI loader, which
 # injects every .asi into the manager's process. The Bridge then opens its
 # console saying "waiting for the game to load", which looks exactly like the
-# game starting. Reported as "launching CraneManager also launches the game".
+# game starting. Reported as "launching CraneLoader also launches the game".
 #
 # ph_ft is where the Vortex extension already puts SuperModMerger and UTM, so
 # this follows the convention rather than inventing one.
@@ -66,7 +66,7 @@ REPOSITORY = "https://github.com/GhoulMonkey/DLTBRuntimeCrane"
 
 SOURCE_NOTICE = """DLTBRuntimeCrane %s -- where to get the source
 
-DLTBRuntimeCrane.asi and CraneManager.exe are licensed under the GNU General
+DLTBRuntimeCrane.asi and CraneLoader.exe are licensed under the GNU General
 Public License version 3.0 only. The full terms are in LICENSE-CRANE.txt,
 beside this file.
 
@@ -100,7 +100,7 @@ def main(argv):
     zip_path, version, asi, manager, gpl_license, lua_license, script = argv[1:8]
     payload = [
         (asi, BASE + "DLTBRuntimeCrane.asi"),
-        (manager, MANAGER_BASE + "CraneManager.exe"),
+        (manager, MANAGER_BASE + "CraneLoader.exe"),
         # The GPL covers both binaries. Section 6 requires its terms and the
         # location of the corresponding source to accompany the object code, so
         # both ship inside the archive rather than on the mod page.

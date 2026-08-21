@@ -38,7 +38,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public enum ParamType { Number, Bool, String, Enum }
 

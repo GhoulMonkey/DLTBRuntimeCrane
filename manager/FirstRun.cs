@@ -9,7 +9,7 @@
 // mod-manager operation that has nothing to do with them.
 //
 // So the archive carries only what is never written -- DLTBRuntimeCrane.asi,
-// CraneManager.exe, the Lua licence -- and everything mutable is created here,
+// CraneLoader.exe, the Lua licence -- and everything mutable is created here,
 // on first run, in files Vortex has never heard of. What Vortex does to deployed
 // config then stops mattering.
 //
@@ -26,7 +26,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public static class FirstRun
     {
@@ -36,7 +36,7 @@ namespace CraneManager
         public const string IniTemplate =
 @"; Crane -- optional developer client for DLTBRuntimeBridge.
 ;
-; Created by CraneManager, and deliberately NOT shipped in the mod archive:
+; Created by CraneLoader, and deliberately NOT shipped in the mod archive:
 ; a file Vortex deploys is a file Vortex can revert, and this one holds a
 ; setting you chose. Delete it and Crane behaves as though every default
 ; were set, which means it observes and changes nothing.
@@ -44,7 +44,7 @@ namespace CraneManager
 [Crane]
 
 ; ---------------------------------------------------------------------------
-; Declarations for CraneManager, which reads them to build its Settings window.
+; Declarations for CraneLoader, which reads them to build its Settings window.
 ; Comments only; Crane itself ignores them.
 ;
 ; @name CRANE
@@ -74,7 +74,7 @@ namespace CraneManager
 ; It takes effect without restarting the game. Turning it off releases
 ; everything scripts are holding and restores what they changed.
 ;
-; CraneManager can set this for you, under Settings.
+; CraneLoader can set this for you, under Settings.
 AllowWrites=0
 ";
 

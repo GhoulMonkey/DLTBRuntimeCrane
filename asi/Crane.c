@@ -40,7 +40,7 @@
 #include "DLTBRuntimeBridgeClientKit.h"
 #include "ManifestParse.h"
 
-#define CRANE_VERSION "2.1.1"
+#define CRANE_VERSION "2.2.0-dev.8"
 #define CRANE_CLIENT_VERSION 20000
 #define CRANE_MEMORY_LIMIT (2u * 1024u * 1024u)
 #define CRANE_INSTRUCTION_BUDGET 100000
@@ -119,7 +119,7 @@ typedef struct lua_host_modifier {
 /*
  * What happened to a script on the last reload.
  *
- * Written out for CraneManager, which otherwise has no way to know: the manager
+ * Written out for CraneLoader, which otherwise has no way to know: the manager
  * writes the manifest and this host reads it, and until now nothing flowed back.
  * Without it a script shows as ticked in the manager whether it ran or failed
  * on line 47.
@@ -1066,7 +1066,7 @@ static const char *state_name(crane_script_state state) {
 /*
  * Writes DLTBRuntimeCrane.status.json after every reload.
  *
- * This is the only channel from the runtime back to CraneManager. The manager
+ * This is the only channel from the runtime back to CraneLoader. The manager
  * writes the manifest and this host reads it; without this file the manager can
  * show that a script is ticked but never that it failed.
  *

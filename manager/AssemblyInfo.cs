@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Version resource for CraneManager.exe.
+// Version resource for CraneLoader.exe.
 //
 // The binary previously shipped with an entirely empty version resource -- no
 // company, product, description or version -- which is both a mild heuristic
@@ -15,16 +15,16 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-[assembly: AssemblyTitle("CraneManager")]
+[assembly: AssemblyTitle("CraneLoader")]
 [assembly: AssemblyDescription("Edits DLTBRuntimeCrane.manifest.json: which Lua scripts DL:TB's Crane runs, and in what order.")]
-[assembly: AssemblyProduct("CraneManager")]
+[assembly: AssemblyProduct("CraneLoader")]
 // TODO: set this to the Nexus author name the mod is published under.
 [assembly: AssemblyCompany("DLTBRuntimeBridge project")]
 [assembly: AssemblyCopyright("Provided as-is under the Crane project's terms.")]
 
 // Numeric fields cannot carry a pre-release suffix; the informational version can.
-[assembly: AssemblyVersion("2.1.1.0")]
-[assembly: AssemblyFileVersion("2.1.1.0")]
-[assembly: AssemblyInformationalVersion("2.1.1")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyInformationalVersion("2.2.0-dev.8")]
 
 [assembly: ComVisible(false)]

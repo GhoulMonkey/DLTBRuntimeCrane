@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Mirrors IniFile.Read and reports what CraneManager will show.
+"""Mirrors IniFile.Read and reports what CraneLoader will show.
 
 Written because a generated annotation can bind to nothing and look fine in the
 file: the label says "Famished" while the key it names does not exist in that

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Generates CraneManager.ico (and PNG previews) with no third-party deps.
+"""Generates CraneLoader.ico (and PNG previews) with no third-party deps.
 
 A tower crane, because the mod is called CRANE and a silhouette is the one kind
 of artwork that survives being shrunk to 16 pixels in a Vortex tool list, which
@@ -168,7 +168,7 @@ for s in sizes:
 
 ico = struct.pack('<HHH', 0, 1, len(sizes)) + b''.join(entries) + b''.join(blobs)
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
-open(os.path.join(out, 'CraneManager.ico'), 'wb').write(ico)
+open(os.path.join(out, 'CraneLoader.ico'), 'wb').write(ico)
 
 open(os.path.join(out, 'preview256.png'), 'wb').write(png_bytes(images[256]))
 

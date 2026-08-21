@@ -14,7 +14,7 @@
 using System;
 using System.ComponentModel;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public class ClientRow : INotifyPropertyChanged
     {

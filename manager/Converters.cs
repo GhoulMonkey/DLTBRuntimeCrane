@@ -11,7 +11,7 @@ using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public class BrushLookupConverter : IValueConverter
     {

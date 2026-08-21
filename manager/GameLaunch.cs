@@ -15,7 +15,7 @@
 using System;
 using System.IO;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public static class GameLaunch
     {

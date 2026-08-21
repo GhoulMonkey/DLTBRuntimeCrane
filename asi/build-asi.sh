@@ -32,7 +32,7 @@ echo "== manifest parser tests =="
 "$clang" -O1 -std=c11 -Wall -Wextra -Werror -o build/test_manifest.exe tools/test_manifest.c
 ./build/test_manifest.exe | tail -2
 
-# There is no shipped INI -- CraneManager generates it on first run -- so the
+# There is no shipped INI -- CraneLoader generates it on first run -- so the
 # AllowWrites=0 assertion lives in the manager's test suite, against
 # FirstRun.IniTemplate, which is the text that actually reaches a user's disk.
 echo "== AllowWrites default: asserted in manager/TestManifest.cs =="

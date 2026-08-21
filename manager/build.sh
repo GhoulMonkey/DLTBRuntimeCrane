@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-only
-# Builds CraneManager.exe and runs its tests.
+# Builds CraneLoader.exe and runs its tests.
 #
 # Two compilers:
 #
@@ -33,12 +33,17 @@ mkdir -p build
 # than one that does not build.
 echo "== tests =="
 "$csc" -nologo -target:exe -warn:4 -warnaserror+ -reference:System.dll \
-    -out:build/CraneManagerTests.exe \
+    -out:build/CraneLoaderTests.exe \
     ManifestFile.cs ScriptHeader.cs StatusFile.cs FirstRun.cs ScriptRow.cs GameLaunch.cs IniFile.cs ClientRow.cs TestManifest.cs
-./build/CraneManagerTests.exe | tail -3
+./build/CraneLoaderTests.exe | tail -3
 
-echo "== CraneManager.exe =="
-"$dotnet" build CraneManager.csproj -c Release -v quiet -nologo
+echo "== theme references =="
+# A palette brush read through StaticResource stops following the theme. Caught
+# here rather than by a user, because nothing downstream of this can see it.
+python tools/validate_theme_refs.py
+
+echo "== CraneLoader.exe =="
+"$dotnet" build CraneLoader.csproj -c Release -v quiet -nologo
 
 # Startup check.
 #
@@ -58,10 +63,10 @@ echo "== CraneManager.exe =="
 # the first attempt to reproduce this bug came up clean for that reason.
 echo "== startup selftest =="
 selftest_dir="$(mktemp -d)"
-(cd "$selftest_dir" && "$root/bin/Release/CraneManager.exe" --selftest)
+(cd "$selftest_dir" && "$root/bin/Release/CraneLoader.exe" --selftest)
 rmdir "$selftest_dir"
 
-output="bin/Release/CraneManager.exe"
+output="bin/Release/CraneLoader.exe"
 size="$(( $(stat -c%s "$output") / 1024 ))"
 echo "Built $output (${size} KB)"
 echo "SHA-256: $(sha256sum "$output" | cut -d' ' -f1)"

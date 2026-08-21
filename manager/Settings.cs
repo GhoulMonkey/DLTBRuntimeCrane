@@ -9,7 +9,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace CraneManager
+namespace CraneLoader
 {
     internal static class Settings
     {
@@ -17,7 +17,7 @@ namespace CraneManager
         {
             string dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "DLTB-CraneManager");
+                "DLTB-CraneLoader");
             Directory.CreateDirectory(dir);
             return Path.Combine(dir, "folder.txt");
         }
@@ -62,6 +62,31 @@ namespace CraneManager
                 File.WriteAllText(file,
                     (scale * 100.0).ToString("0", System.Globalization.CultureInfo.InvariantCulture),
                     new UTF8Encoding(false));
+            }
+            catch (IOException) { }
+        }
+
+        // Theme, persisted by name rather than by its colours: the palettes may
+        // be re-tuned between versions and a saved name picks the improvements
+        // up, where saved hex values would pin somebody to an old draft.
+        public static string LoadTheme()
+        {
+            try
+            {
+                string file = Path.Combine(Path.GetDirectoryName(PathToFile()), "theme.txt");
+                if (!File.Exists(file)) return Theme.Default;
+                string name = File.ReadAllText(file, Encoding.UTF8).Trim();
+                return name.Length == 0 ? Theme.Default : name;
+            }
+            catch (IOException) { return Theme.Default; }
+        }
+
+        public static void SaveTheme(string name)
+        {
+            try
+            {
+                string file = Path.Combine(Path.GetDirectoryName(PathToFile()), "theme.txt");
+                File.WriteAllText(file, name, new UTF8Encoding(false));
             }
             catch (IOException) { }
         }

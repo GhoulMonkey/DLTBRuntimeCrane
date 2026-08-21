@@ -5,8 +5,8 @@ DLTBRuntimeBridge.
 
 DLTBRuntimeCrane runs plain Lua 5.4 scripts that reach the game only through
 the Bridge's public API. It owns no game addresses, installs no hooks, and
-performs no memory writes of its own; a build gate enforces that on every
-compile. Scripts are enabled, ordered and configured in CraneManager, and the
+performs no memory writes of its own; a build check enforces that on every
+compile. Scripts are enabled, ordered and configured in CraneLoader, and the
 Bridge's lease system handles conflicts between scripts and restores what they
 changed.
 
@@ -34,7 +34,7 @@ The source for the two binaries in the download, and the authoring kit:
 | | |
 |---|---|
 | `asi/` | `DLTBRuntimeCrane.asi`, the scripting host (C) |
-| `manager/` | `CraneManager.exe`, the script manager and settings editor (C#, WPF) |
+| `manager/` | `CraneLoader.exe`, the script manager and settings editor (C#, WPF) |
 | `asi/vendor/` | Lua 5.4, unmodified, MIT licensed |
 | `asi/include/` | the Bridge's public client headers, compiled against |
 | `layout/` | the installed file tree, with the two build outputs missing |
@@ -59,7 +59,7 @@ Omit `CLANG=` if the compiler is on `PATH`. The build runs a gate asserting the
 source reaches the game only through the Bridge ABI, then 95 manifest parser
 checks, then compiles with `-Wall -Wextra -Werror`.
 
-### CraneManager.exe
+### CraneLoader.exe
 
 Requires .NET Framework 4.8, present on Windows 10 and 11, plus .NET SDK 6 or
 newer for the XAML compile, and bash.
@@ -69,7 +69,7 @@ cd manager
 ./build.sh
 ```
 
-The output is at `manager/bin/Release/CraneManager.exe`. The build runs 183 unit
+The output is at `manager/bin/Release/CraneLoader.exe`. The build runs 183 unit
 tests and a startup selftest that constructs the main window without showing it.
 
 Both builds also run on every push here, in
@@ -81,7 +81,7 @@ Both builds also run on every push here, in
 two build outputs into it:
 
 ```
-ph_ft/CraneManager.exe                              from manager/bin/Release/
+ph_ft/CraneLoader.exe                              from manager/bin/Release/
 ph_ft/work/bin/x64/DLTBRuntimeCrane.asi             from asi/
 ph_ft/work/bin/x64/LICENSE-Lua.txt                  included
 ph_ft/work/bin/x64/scripts/quick_hands.lua          included
@@ -90,7 +90,7 @@ ph_ft/work/bin/x64/DLTBRuntimeCrane.manifest.json   included, see below
 ```
 
 The `.ini` and the `.manifest.json` are not in the released archive.
-CraneManager writes both on first run, from `FirstRun.cs`. The copies in
+CraneLoader writes both on first run, from `FirstRun.cs`. The copies in
 `layout/` are what it writes, so the tree can be assembled by hand. The manifest
 is an empty list.
 
@@ -100,7 +100,7 @@ until it is set to 1.
 ## Writing scripts
 
 `sdk/` is the authoring kit. A CRANE script is a single `.lua` file with a
-metadata header; CraneManager reads that header to build the settings a player
+metadata header; CraneLoader reads that header to build the settings a player
 sees, and the script reaches the game through the global `bridge` table.
 
 Start at [sdk/docs/QUICKSTART.md](sdk/docs/QUICKSTART.md), then
@@ -138,7 +138,7 @@ paths to be added to it as development continues.
 CRANE is published under two licenses: the GPL for the host, MIT for the
 interface authors build against.
 
-`DLTBRuntimeCrane.asi` and `CraneManager.exe` — everything under `asi/`,
+`DLTBRuntimeCrane.asi` and `CraneLoader.exe` — everything under `asi/`,
 `manager/` and `tools/` — are under the GNU General Public License version 3.0
 only. See `LICENSE`. Distributing a modified version means distributing its
 source under the same terms; selling it is permitted.

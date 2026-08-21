@@ -1,10 +1,10 @@
-<Window x:Class="CraneManager.MainWindow"
+<Window x:Class="CraneLoader.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="CraneManager" Height="620" Width="1000"
+        Title="CraneLoader" Height="620" Width="1000"
         MinHeight="460" MinWidth="760"
-        Background="{StaticResource Surface}"
-        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
+        Background="{DynamicResource Surface}"
+        UseLayoutRounding="True"
         WindowStartupLocation="CenterScreen"
         AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver">
 
@@ -33,32 +33,78 @@
       resize, snap, minimise, maximise and the accessibility behaviours that come
       with it, and every one of those is worse hand-rolled.
 
-      That leaves this band carrying only system state, so it merges into the
+      The bar follows the theme instead, through DWMWA_USE_IMMERSIVE_DARK_MODE
+      in MainWindow.xaml.cs, which the shell applies to its own chrome.
+
+      That leaves this band carrying system state only, so it merges into the
       toolbar row below and buys back its height.
     -->
 
-    <!-- (10) Summary -->
-    <Border DockPanel.Dock="Bottom" Background="{StaticResource SurfaceAlt}"
-            BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="12,7">
-      <TextBlock x:Name="StatusText" Text="Starting..." Style="{StaticResource Subtle}"/>
+    <!--
+      (10) Summary. Quiet, and using the same state vocabulary as the capsule.
+    -->
+    <Border DockPanel.Dock="Bottom" Background="{DynamicResource SurfaceAlt}"
+            BorderBrush="{DynamicResource Rule}" BorderThickness="0,1,0,0"
+            Padding="{StaticResource PadStatus}">
+      <Grid>
+        <TextBlock x:Name="StatusText" Text="STARTING" Style="{StaticResource TaxonomyLabel}"/>
+        <TextBlock x:Name="StatusRight" Style="{StaticResource TaxonomyLabel}"
+                   HorizontalAlignment="Right" Foreground="{DynamicResource InkFaint}"/>
+      </Grid>
     </Border>
 
-    <!-- (2) Actions, placed by scope: global left, configuration right -->
-    <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Rule}"
-            BorderThickness="0,0,0,1" Padding="12,8">
+    <!-- (2) Actions, placed by scope: global left, configuration right. -->
+    <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceAlt}"
+            BorderBrush="{DynamicResource Rule}"
+            BorderThickness="0,0,0,1" Padding="{StaticResource PadBand}">
       <Grid>
+        <!-- No wordmark and no icon: Windows already draws both in the title
+             bar, and repeating them spends the toolbar row saying it twice. -->
         <StackPanel Orientation="Horizontal">
-          <Button x:Name="AddButton" Content="Add script..." Padding="12,4" Click="OnAdd"/>
-          <Button x:Name="ReloadButton" Content="Reload" Padding="12,4" Margin="8,0,0,0" Click="OnReload"/>
-          <Button x:Name="LaunchButton" Content="Launch game" Padding="12,4" Margin="8,0,0,0" Click="OnLaunch"/>
+          <Button x:Name="AddButton" Click="OnAdd">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+              <TextBlock Text="Add script" Margin="8,0,0,0" VerticalAlignment="Center"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+            </StackPanel>
+          </Button>
+
+          <Button x:Name="ReloadButton" Margin="8,0,0,0" Click="OnReload">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+              <TextBlock Text="Reload" Margin="8,0,0,0" VerticalAlignment="Center"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+            </StackPanel>
+          </Button>
+
+          <Button x:Name="LaunchButton" Content="Launch game" Margin="8,0,0,0"
+                  Style="{StaticResource PrimaryButton}" Click="OnLaunch"/>
         </StackPanel>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-          <TextBlock x:Name="ConnectionText" Text="Game: not running"
-                     Foreground="{StaticResource InkMuted}" VerticalAlignment="Center"/>
-          <Ellipse x:Name="ConnectionDot" Width="9" Height="9" Margin="8,0,16,0"
-                   Fill="{StaticResource StateIdle}" VerticalAlignment="Center"/>
-          <Button x:Name="SettingsButton" Content="Settings" Padding="12,4"
-                  Click="OnSettings"/>
+          <!-- A compact capsule, so the readout reads as instrumentation. -->
+          <Border x:Name="ConnectionCapsule" CornerRadius="{StaticResource RadiusButton}"
+                  Background="{DynamicResource Surface}"
+                  BorderBrush="{DynamicResource Rule}" BorderThickness="1"
+                  Padding="9,4,11,4" VerticalAlignment="Center" Margin="0,0,12,0">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="ConnectionDot" Width="8" Height="8"
+                       Fill="{DynamicResource StateIdle}" VerticalAlignment="Center"/>
+              <TextBlock x:Name="ConnectionText" Text="GAME OFFLINE" Margin="8,0,0,0"
+                         Style="{StaticResource TaxonomyLabel}"/>
+            </StackPanel>
+          </Border>
+
+          <Button x:Name="SettingsButton" Click="OnSettings">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Style="{StaticResource Glyph}" Text="&#xE713;"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+              <TextBlock Text="Settings" Margin="8,0,0,0" VerticalAlignment="Center"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+            </StackPanel>
+          </Button>
         </StackPanel>
       </Grid>
     </Border>
@@ -81,7 +127,8 @@
         The splitter gives scripts the flexible half and clients a proportional
         one, so a long client list cannot squeeze the scripts to nothing.
       -->
-      <Grid Grid.Column="0">
+      <Border Grid.Column="0" Background="{DynamicResource SurfaceAlt}">
+      <Grid>
         <!--
           Clients above scripts, and clients sized to their content.
 
@@ -102,27 +149,27 @@
           <RowDefinition Height="*" MinHeight="90"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="BRIDGE CLIENTS" Margin="12,10,12,4"
-                   FontSize="11" FontWeight="SemiBold"
-                   Foreground="{StaticResource InkFaint}"/>
+        <!-- Label plus a short accent rule, rather than a filled block
+             header. -->
+        <StackPanel Grid.Row="0" Margin="12,12,12,6">
+          <TextBlock Text="BRIDGE CLIENTS" Style="{StaticResource TaxonomyLabel}"/>
+          <Border Height="2" Width="26" HorizontalAlignment="Left"
+                  Background="{DynamicResource Accent}" Margin="0,5,0,0"/>
+        </StackPanel>
 
       <DockPanel Grid.Row="3">
-        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceAlt}"
-                BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,1"
-                Padding="12,6,12,6" Margin="0,4,0,0">
-          <TextBlock Text="CRANE SCRIPTS" FontSize="11" FontWeight="SemiBold"
-                     Foreground="{StaticResource InkFaint}"/>
-        </Border>
-        <ListBox x:Name="ScriptList" BorderThickness="0" Background="Transparent"
-                 HorizontalContentAlignment="Stretch"
+        <StackPanel DockPanel.Dock="Top" Margin="12,14,12,6">
+          <TextBlock Text="CRANE SCRIPTS" Style="{StaticResource TaxonomyLabel}"/>
+          <Border Height="2" Width="26" HorizontalAlignment="Left"
+                  Background="{DynamicResource Accent}" Margin="0,5,0,0"/>
+        </StackPanel>
+        <ListBox x:Name="ScriptList"
                  SelectionChanged="OnScriptSelected"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
           <ListBox.ItemContainerStyle>
-            <Style TargetType="ListBoxItem">
-              <Setter Property="Padding" Value="10,7"/>
-              <Setter Property="BorderThickness" Value="0"/>
-              <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-            </Style>
+            <!-- BasedOn matters: an ItemContainerStyle without it replaces the
+                 implicit ListBoxItem style, losing the selection strip. -->
+            <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}"/>
           </ListBox.ItemContainerStyle>
           <ListBox.ItemTemplate>
             <DataTemplate>
@@ -153,7 +200,7 @@
 
                 <TextBlock Grid.Column="1" Grid.Row="1" Grid.ColumnSpan="2"
                            Text="{Binding Secondary}" Margin="8,1,0,0"
-                           FontSize="11" Foreground="{StaticResource InkMuted}"
+                           FontSize="11" Foreground="{DynamicResource InkMuted}"
                            TextTrimming="CharacterEllipsis"/>
               </Grid>
             </DataTemplate>
@@ -161,16 +208,11 @@
         </ListBox>
       </DockPanel>
 
-      <ListBox x:Name="ClientList" Grid.Row="1" BorderThickness="0"
-               Background="Transparent" HorizontalContentAlignment="Stretch"
+      <ListBox x:Name="ClientList" Grid.Row="1"
                SelectionChanged="OnClientSelected"
                ScrollViewer.HorizontalScrollBarVisibility="Disabled">
         <ListBox.ItemContainerStyle>
-          <Style TargetType="ListBoxItem">
-            <Setter Property="Padding" Value="10,7"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-          </Style>
+          <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}"/>
         </ListBox.ItemContainerStyle>
         <ListBox.ItemTemplate>
           <DataTemplate>
@@ -206,7 +248,7 @@
                          TextTrimming="CharacterEllipsis"/>
               <TextBlock Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="1"
                          Text="{Binding Secondary}" Margin="0,1,0,0" FontSize="11"
-                         Foreground="{StaticResource InkMuted}"
+                         Foreground="{DynamicResource InkMuted}"
                          TextTrimming="CharacterEllipsis"/>
             </Grid>
           </DataTemplate>
@@ -214,11 +256,13 @@
       </ListBox>
 
       </Grid>
+      </Border>
 
       <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch"
-                    Background="{StaticResource Rule}" ResizeBehavior="PreviousAndNext"/>
+                    Background="{DynamicResource Rule}" ResizeBehavior="PreviousAndNext"/>
 
-      <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="16,12">
+      <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto"
+                    Padding="{StaticResource PadPane}">
         <StackPanel x:Name="Detail"/>
       </ScrollViewer>
     </Grid>

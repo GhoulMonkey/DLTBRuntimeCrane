@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.2.0
+
 - Relicenses the scripting host and the manager under the GNU General Public
   License version 3.0 only. A distributed fork carries its source under the
   same terms.
@@ -12,6 +14,24 @@
   received them.
 - Adds `LICENSE-CRANE.txt` and `SOURCE-CRANE.txt` to the release archive, so
   the terms and the location of the source ship with the binaries.
+- Renames `CraneManager.exe` to `CraneLoader.exe`. A previously installed
+  `CraneManager.exe` is left behind by the update and can be deleted.
+- Adds a theme selector: Light, Paper, Graphite, Slate and Beast. Beast is
+  matched to the game's own menus. Changing it repaints immediately and the
+  choice is remembered.
+- Replaces the stock Windows control chrome with buttons, checkboxes,
+  dropdowns, text fields, list rows and scrollbars drawn in the chosen theme,
+  and drops the system's blue selection and focus rectangles.
+- The title bar now follows the theme, still drawn by Windows.
+- Settings are indented under their section heading, with a rule beneath each
+  heading.
+- Fixes the Settings window cutting off its fields at UI scales above 100%.
+  Present in 2.1.1 and every earlier release.
+- Text now scales cleanly above 100% instead of being snapped to the pixel
+  grid.
+- Icons come from Windows' own icon font, so they stay sharp at every scale.
+- Removes the application name and icon from inside the window, where they
+  duplicated the title bar.
 
 ## 2.1.1
 

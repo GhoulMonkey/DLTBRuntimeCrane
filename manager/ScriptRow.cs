@@ -14,7 +14,7 @@ using System;
 using System.ComponentModel;
 using System.Globalization;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public class ScriptRow : INotifyPropertyChanged
     {

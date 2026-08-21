@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// CraneManager -- main window.
+// CraneLoader -- main window.
 //
 // Port of MainForm.cs from WinForms to WPF. The logic layer is unchanged:
 // ManifestFile, ScriptHeader, StatusFile and FirstRun are reused verbatim, and
@@ -17,10 +17,28 @@ using System.Globalization;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-namespace CraneManager
+namespace CraneLoader
 {
     public partial class MainWindow : Window
     {
+        /*
+         * Settings sit indented under their section heading, so the heading is
+         * the only thing on its own edge and the grouping survives scrolling.
+         * Matches GapWide in App.xaml.
+         */
+        private const double SettingIndent = 16;
+
+        /* A hairline under a section heading rather than a card around the
+           section, so the pane keeps reading top to bottom. */
+        private Border SectionRule()
+        {
+            Border rule = new Border();
+            rule.Height = 1;
+            rule.SetResourceReference(Border.BackgroundProperty, "Rule");
+            rule.Margin = new Thickness(0, 0, 0, 10);
+            return rule;
+        }
+
         private List<ScriptEntry> _entries = new List<ScriptEntry>();
         private string _folder = "";
         private FileSystemWatcher _scriptWatcher;
@@ -37,6 +55,7 @@ namespace CraneManager
         public MainWindow()
         {
             InitializeComponent();
+            WindowChrome.Apply(this, Theme.Find(Theme.Current).Dark);
             Loaded += OnLoaded;
         }
 
@@ -534,7 +553,7 @@ namespace CraneManager
                 {
                     if (File.Exists(target) &&
                         MessageBox.Show(this, file + " already exists in scripts\\. Overwrite it?",
-                                        "CraneManager", MessageBoxButton.YesNo,
+                                        "CraneLoader", MessageBoxButton.YesNo,
                                         MessageBoxImage.Question) != MessageBoxResult.Yes)
                         return;
                     File.Copy(source, target, true);
@@ -708,7 +727,7 @@ namespace CraneManager
             if (MessageBox.Show(this,
                     "Delete " + row.File + " from \\scripts?\r\n\r\n" +
                     "The file is removed from disk. Its settings are forgotten.",
-                    "CraneManager", MessageBoxButton.YesNo,
+                    "CraneLoader", MessageBoxButton.YesNo,
                     MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
                 return;
             try
@@ -728,10 +747,29 @@ namespace CraneManager
             StatusText.Text = row.File + " deleted.";
         }
 
+        /*
+         * Scale the window, and pick the text rendering to match.
+         *
+         * Display mode snaps glyphs to whole pixels, which is right at 100%,
+         * where a device-independent unit is a pixel, and wrong under a
+         * transform, where that grid is no longer the one being drawn on. Ideal
+         * keeps the typeface's proportions and lets the transform scale them.
+         * TextOptions inherits, so the root covers every element below it.
+         */
+        internal static TextFormattingMode FormattingFor(double scale)
+        {
+            return Math.Abs(scale - 1.0) < 0.001
+                ? TextFormattingMode.Display : TextFormattingMode.Ideal;
+        }
+
         private void ApplyScale(double scale)
         {
             RootScale.ScaleX = scale;
             RootScale.ScaleY = scale;
+            TextOptions.SetTextFormattingMode(Root, FormattingFor(scale));
+            // Snapping layout to whole pixels fights a fractional transform for
+            // the same reason.
+            UseLayoutRounding = Math.Abs(scale - 1.0) < 0.001;
         }
 
         /*
@@ -745,6 +783,11 @@ namespace CraneManager
             Window dialog = new Window();
             dialog.Title = "Settings";
             dialog.Owner = this;
+            // A separate Window inherits the application's resources but not the
+            // main window's own properties, so the surface and the chrome both
+            // have to be asked for again here.
+            dialog.SetResourceReference(Window.BackgroundProperty, "Surface");
+            WindowChrome.Apply(dialog, Theme.Find(Theme.Current).Dark);
             /*
              * Resizable, like the window it belongs to.
              *
@@ -754,15 +797,39 @@ namespace CraneManager
              * that wrong on some screens with no way for the user to correct it.
              */
             dialog.ResizeMode = ResizeMode.CanResize;
-            dialog.Width = 560;
-            dialog.Height = 640;
-            dialog.MinWidth = 380;
-            dialog.MinHeight = 260;
+
+            /*
+             * The dialog's own size scales with the UI scale. The contents are
+             * scaled by a LayoutTransform below, but these four numbers are
+             * device-independent units and were not, so above 100% the content
+             * needed more width than the window had and the fields were cut off.
+             * Present in 2.1.1 and earlier.
+             *
+             * Capped to the work area, because the scale goes to 200% and a
+             * dialog larger than the screen is a worse failure than the one
+             * being fixed.
+             */
+            double zoom = Settings.LoadScale();
+            dialog.Width = Math.Min(560 * zoom, SystemParameters.WorkArea.Width);
+            dialog.Height = Math.Min(640 * zoom, SystemParameters.WorkArea.Height);
+            dialog.MinWidth = Math.Min(380 * zoom, SystemParameters.WorkArea.Width);
+            dialog.MinHeight = Math.Min(260 * zoom, SystemParameters.WorkArea.Height);
             dialog.WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
             StackPanel panel = new StackPanel();
             panel.Margin = new Thickness(16);
-            panel.MinWidth = 460;
+            /*
+              * Nothing here declares a width, deliberately.
+              *
+              * A ScrollViewer with horizontal scrolling disabled measures its
+              * content at exactly the viewport width, which is correct at every
+              * window size and UI scale. Three attempts to improve on that each
+              * made it worse: MinWidth stopped the panel shrinking and clipped
+              * the right edge; enabling horizontal scrolling measured content at
+              * infinite width and stopped TextWrapping working; and subtracting
+              * a constant from ActualWidth was wrong by a few pixels at every
+              * size, because border and scrollbar metrics vary by theme and DPI.
+              */
             // The Bridge alone declares eleven settings, so this window can now
             // be taller than a small screen. Capped and scrolled rather than
             // left to SizeToContent, which would push the Close button off.
@@ -778,12 +845,19 @@ namespace CraneManager
              * running the UI at 150% opened Settings and got a 100% dialog, which
              * reads as the setting having stopped working.
              *
-             * MaxHeight is applied in device-independent units before the
-             * transform, so it is divided by the scale; otherwise a scaled dialog
-             * would grow past the screen it was capped to fit.
+             * The dialog's own dimensions are scaled by the same factor where it
+             * is constructed above, because a LayoutTransform grows what the
+             * content asks for without telling the window to make room for it.
              */
-            double zoom = Settings.LoadScale();
             scroller.LayoutTransform = new ScaleTransform(zoom, zoom);
+            TextOptions.SetTextFormattingMode(scroller, FormattingFor(zoom));
+
+            /*
+             * Disabled: these are responsive rows, not a wide canvas. Allowing
+             * horizontal scroll would remove the width constraint that wrapping
+             * depends on. The narrow case is handled by dialog.MinWidth above.
+             */
+            scroller.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
 
             TextBlock folderLabel = new TextBlock();
             folderLabel.Text = "Game folder";
@@ -804,6 +878,46 @@ namespace CraneManager
             // with no way in at all.
             panel.Children.Add(folderBox);
             panel.Children.Add(folderHint);
+
+            /*
+             * Theme, above UI scale because it is the one people go looking for.
+             *
+             * Applied on selection rather than behind an OK button: a palette is
+             * judged by looking at it, and a picker that needs confirmation
+             * before you can see the result makes choosing one a guessing game.
+             * The change repaints both windows immediately, this dialog
+             * included, so the effect is visible where it is being made.
+             */
+            TextBlock themeLabel = new TextBlock();
+            themeLabel.Text = "Theme";
+            themeLabel.Style = (Style)FindResource("SectionHeading");
+            panel.Children.Add(themeLabel);
+
+            ComboBox themes = new ComboBox();
+            foreach (ThemeDefinition definition in Theme.All)
+            {
+                ComboBoxItem item = new ComboBoxItem();
+                item.Content = definition.Name;
+                item.Tag = definition;
+                themes.Items.Add(item);
+                if (definition.Name == Theme.Current) themes.SelectedItem = item;
+            }
+            TextBlock themeHint = new TextBlock();
+            themeHint.Style = (Style)FindResource("Subtle");
+            themeHint.FontSize = 11;
+            themeHint.Margin = new Thickness(0, 4, 0, 0);
+            themeHint.Text = Theme.Find(Theme.Current).Summary;
+            themes.SelectionChanged += delegate
+            {
+                ComboBoxItem item = themes.SelectedItem as ComboBoxItem;
+                if (item == null) return;
+                ThemeDefinition chosen = (ThemeDefinition)item.Tag;
+                Theme.Apply(chosen.Name);
+                Settings.SaveTheme(chosen.Name);
+                themeHint.Text = chosen.Summary;
+            };
+            panel.Children.Add(themes);
+            panel.Children.Add(themeHint);
 
             TextBlock scaleLabel = new TextBlock();
             scaleLabel.Text = "UI scale";
@@ -831,6 +945,7 @@ namespace CraneManager
                 // Rescale the open dialog as well, so the change is visible where
                 // it is being made rather than only on the window behind it.
                 scroller.LayoutTransform = new ScaleTransform(chosen, chosen);
+                TextOptions.SetTextFormattingMode(scroller, FormattingFor(chosen));
             };
             panel.Children.Add(scale);
 
@@ -869,18 +984,30 @@ namespace CraneManager
                 // control. Everything stays visible, and the indent is what says
                 // "Console and log" belongs to the Bridge rather than sitting
                 // beside it.
-                inner.Margin = new Thickness(14, 0, 0, 0);
+                inner.Margin = new Thickness(SettingIndent, 0, 0, 0);
+
+                /*
+                 * A platform is a stronger division than the category headings
+                 * beneath it, so it gets the display face and a rule of its own.
+                 * CRANE's rule is teal and the Bridge's is neutral: this tool is
+                 * CRANE's, and the Bridge is the runtime it happens to be able to
+                 * configure. Making both rules identical said they were peers.
+                 */
+                bool isCrane = platform.Name.IndexOf("crane",
+                    StringComparison.OrdinalIgnoreCase) >= 0;
 
                 TextBlock header = new TextBlock();
-                header.Text = platform.Name;
+                header.Text = platform.Name.ToUpperInvariant();
+                header.FontFamily = (FontFamily)FindResource("DisplayFont");
                 header.FontWeight = FontWeights.SemiBold;
                 header.FontSize = 13;
-                header.Foreground = (Brush)FindResource("Ink");
+                header.SetResourceReference(TextBlock.ForegroundProperty, "Ink");
                 header.Margin = new Thickness(0, 18, 0, 4);
 
                 Border rule = new Border();
-                rule.Height = 1;
-                rule.Background = (Brush)FindResource("Rule");
+                rule.Height = isCrane ? 2 : 1;
+                rule.SetResourceReference(Border.BackgroundProperty,
+                                          isCrane ? "Accent" : "Rule");
                 rule.Margin = new Thickness(0, 0, 0, 6);
 
                 panel.Children.Add(header);
@@ -1042,16 +1169,35 @@ namespace CraneManager
              */
             bool gameUp = GameLaunch.IsGameRunning();
             bool reporting = gameUp && StatusFile.IsFresh(_folder);
-            ConnectionText.Text = reporting ? "Game: connected"
-                                : gameUp ? "Game: starting..."
-                                : "Game: not running";
+            /* Three states, one vocabulary, and the same words in the capsule
+               and the status bar. */
+            ConnectionText.Text = reporting ? "GAME ATTACHED"
+                                : gameUp ? "GAME STARTING"
+                                : "GAME OFFLINE";
             bool running = reporting;
             ConnectionText.ToolTip = File.Exists(status)
                 ? "Last report from Crane: " + File.GetLastWriteTime(status).ToString("HH:mm:ss")
                 : "Crane has not written a status report in this folder yet.";
-            ConnectionDot.Fill = running
-                ? (Brush)FindResource("StateGood")
-                : (Brush)FindResource("StateIdle");
+
+            // Qualified: this file uses System.IO.Path, so importing
+            // System.Windows.Shapes would make every Path.Combine ambiguous.
+            ConnectionDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty,
+                reporting ? "StateGood" : gameUp ? "StateWarn" : "StateIdle");
+            ConnectionText.SetResourceReference(TextBlock.ForegroundProperty,
+                running ? "Ink" : "InkMuted");
+            // The capsule's own border carries the state too, so the readout is
+            // legible from the shape of it before any word is read.
+            ConnectionCapsule.SetResourceReference(Border.BorderBrushProperty,
+                running ? "AccentDim" : "Rule");
+
+            // Persistent instrumentation, right-aligned, distinct from the
+            // transient prose on the left. Counts plus the same state word.
+            int total = _entries.Count;
+            int on = 0;
+            foreach (ScriptEntry entry in _entries) if (entry.Enabled) on++;
+            StatusRight.Text = string.Format(CultureInfo.InvariantCulture,
+                "{0} SCRIPT{1}  •  {2} ENABLED  •  {3}",
+                total, total == 1 ? "" : "S", on, ConnectionText.Text);
         }
 
         /*
@@ -1083,7 +1229,9 @@ namespace CraneManager
             // rather than taking up a column in the list.
             TextBlock file = new TextBlock();
             file.Text = entry.File;
-            file.Foreground = (Brush)FindResource("InkFaint");
+            // Metadata, not an inactive control. InkFaint is the disabled level
+            // now, and spending it here would blur the two categories again.
+            file.SetResourceReference(TextBlock.ForegroundProperty, "InkMuted");
             file.Margin = new Thickness(0, 1, 0, 0);
             Detail.Children.Add(file);
 
@@ -1092,15 +1240,18 @@ namespace CraneManager
             if (entry.State == ScriptState.Failed && entry.StateError.Length > 0)
             {
                 Border alert = new Border();
-                alert.Background = new SolidColorBrush(Color.FromRgb(0xFD, 0xF2, 0xF1));
-                alert.BorderBrush = (Brush)FindResource("StateBad");
-                alert.BorderThickness = new Thickness(0, 0, 0, 0);
+                alert.SetResourceReference(Border.BackgroundProperty, "SurfaceAlert");
+                // A bar on the leading edge, the same idiom the selected row
+                // uses, rather than a box outline. The colour marks the block;
+                // the text stays at full contrast.
+                alert.SetResourceReference(Border.BorderBrushProperty, "StateBad");
+                alert.BorderThickness = new Thickness(3, 0, 0, 0);
                 alert.Padding = new Thickness(10, 8, 10, 8);
                 alert.Margin = new Thickness(0, 12, 0, 0);
                 TextBlock text = new TextBlock();
                 text.Text = entry.StateError;
                 text.TextWrapping = TextWrapping.Wrap;
-                text.Foreground = (Brush)FindResource("StateBad");
+                text.SetResourceReference(TextBlock.ForegroundProperty, "Ink");
                 alert.Child = text;
                 Detail.Children.Add(alert);
             }
@@ -1148,9 +1299,10 @@ namespace CraneManager
             foreach (string group in groups)
             {
                 TextBlock heading = new TextBlock();
-                heading.Text = group.Length == 0 ? "Settings" : group;
+                heading.Text = (group.Length == 0 ? "Settings" : group).ToUpperInvariant();
                 heading.Style = (Style)FindResource("SectionHeading");
                 Detail.Children.Add(heading);
+                Detail.Children.Add(SectionRule());
 
                 foreach (ParamDecl decl in entry.Declared)
                     if (decl.Group == group)
@@ -1252,7 +1404,9 @@ namespace CraneManager
 
             TextBlock file = new TextBlock();
             file.Text = client.File;
-            file.Foreground = (Brush)FindResource("InkFaint");
+            // Metadata, not an inactive control. InkFaint is the disabled level
+            // now, and spending it here would blur the two categories again.
+            file.SetResourceReference(TextBlock.ForegroundProperty, "InkMuted");
             file.Margin = new Thickness(0, 1, 0, 0);
             Detail.Children.Add(file);
 
@@ -1323,9 +1477,10 @@ namespace CraneManager
             foreach (string group in groups)
             {
                 TextBlock heading = new TextBlock();
-                heading.Text = group.Length == 0 ? "Settings" : group;
+                heading.Text = (group.Length == 0 ? "Settings" : group).ToUpperInvariant();
                 heading.Style = (Style)FindResource("SectionHeading");
                 target.Children.Add(heading);
+                target.Children.Add(SectionRule());
 
                 foreach (IniSetting setting in client.Declared)
                     if (setting.Decl.Group == group)
@@ -1407,7 +1562,7 @@ namespace CraneManager
         {
             ParamDecl decl = setting.Decl;
             Grid grid = new Grid();
-            grid.Margin = new Thickness(0, 0, 0, 10);
+            grid.Margin = new Thickness(SettingIndent, 0, 0, 10);
             grid.ColumnDefinitions.Add(new ColumnDefinition());
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition());
@@ -1452,7 +1607,7 @@ namespace CraneManager
                 TextBlock note = new TextBlock();
                 note.Text = hint;
                 note.FontSize = 11;
-                note.Foreground = (Brush)FindResource(
+                note.SetResourceReference(TextBlock.ForegroundProperty,
                     declaredButAbsent ? "StateBad" : "InkFaint");
                 note.TextWrapping = TextWrapping.Wrap;
                 note.Margin = new Thickness(0, 2, 0, 0);
@@ -1538,7 +1693,7 @@ namespace CraneManager
         private UIElement SettingRow(ScriptEntry entry, ParamDecl decl)
         {
             Grid grid = new Grid();
-            grid.Margin = new Thickness(0, 0, 0, 10);
+            grid.Margin = new Thickness(SettingIndent, 0, 0, 10);
             grid.ColumnDefinitions.Add(new ColumnDefinition());
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition());
@@ -1584,7 +1739,9 @@ namespace CraneManager
                 TextBlock note = new TextBlock();
                 note.Text = hint;
                 note.FontSize = 11;
-                note.Foreground = (Brush)FindResource("InkFaint");
+                // This is the description line itself, so it belongs on the
+                // secondary level, not the disabled one.
+                note.SetResourceReference(TextBlock.ForegroundProperty, "InkMuted");
                 note.TextWrapping = TextWrapping.Wrap;
                 note.Margin = new Thickness(0, 2, 0, 0);
                 Grid.SetRow(note, 1);
