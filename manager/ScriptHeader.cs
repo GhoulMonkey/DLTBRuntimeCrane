@@ -42,6 +42,91 @@ namespace CraneLoader
 {
     public enum ParamType { Number, Bool, String, Enum }
 
+    /*
+     * One path a script may take an exclusive lease on.
+     *
+     *   -- @claims var.DamageMulAll
+     *   -- @claims interaction.BodyContainer.duration_scale when=body_containers
+     *
+     * Declared rather than discovered. The manager could in principle scan for
+     * bridge.claim("...") calls, and it would be wrong for most of the pack:
+     * Steady Hands builds its six paths by concatenating a class name inside a
+     * loop, Well Fed claims one lever only when its bonus is non-zero, and
+     * Damage Budget iterates a table. Nothing short of running the script
+     * recovers those, and running it is exactly what this manager must not do
+     * to decide whether the user wants to run it -- the same rule that put
+     * @param in a comment.
+     *
+     * `when` names a parameter that gates the claim: the path is only taken when
+     * that parameter is on. Without it, a script whose six class toggles are all
+     * off would still be reported as fighting Quick Hands over six paths it
+     * never asks for, and an indicator that cries wolf is one the user learns to
+     * ignore.
+     *
+     *   -- @claims var.AdvancedStaminaRegenerationRelative when=stamina_mul off=1
+     *
+     * `off` says which value means "does nothing", because for half this pack
+     * that value is 1 and not 0. A multiplier at 1.0 is a lever the script skips
+     * claiming, and Well Fed ships with exactly that as its default -- so
+     * without `off` its stamina lease would be declared on every install and
+     * taken on almost none. Absent, the rule is the obvious one: false, or zero.
+     *
+     * Crane never reads any of this. A missing or wrong declaration costs a
+     * warning that does not appear or one that appears wrongly; it can never
+     * change what the runtime grants, which is decided by the claim itself.
+     */
+    public class ClaimDecl
+    {
+        public string Path { get; set; }
+        public string When { get; set; }
+        // The literal, as written. Kept as text rather than coerced here: the
+        // parameter it gates may be a number, a bool or an enum, and which one
+        // is not known until the declaration is matched against the script's
+        // @param lines, which happens later and elsewhere.
+        public string Off { get; set; }
+
+        /*
+         * What the script does instead when this particular lease is refused,
+         * for the scripts that have an answer.
+         *
+         * Well Fed is the case. It wants var.DamageMulAll, Fight or Flight
+         * usually has it, and being refused is not the end: it routes its
+         * contribution through Damage Budget and works anyway. Without this the
+         * manager reports the strictly true "does nothing while Fight or Flight
+         * is on" about a script that does plenty, and the first user to check
+         * learns the warning overstates -- which costs more than the warning
+         * ever earned.
+         *
+         * Written from the script's own side and lower case, because it is
+         * appended to a sentence:  ...; contributes through Damage Budget.
+         */
+        public string Fallback { get; set; }
+
+        /*
+         * The script the fallback depends on, by filename:
+         *
+         *   -- @claims var.DamageMulAll when=damage_bonus
+         *      fallback="contributes through Damage Budget instead"
+         *      needs=damage_budget.lua
+         *
+         * Well Fed's alternative route only exists while Damage Budget is
+         * enabled; with it off, being refused really does mean the damage half
+         * does nothing, which is what its own log says. A fallback declared
+         * unconditionally would have the manager quietly reassuring the user in
+         * exactly the arrangement where the reassurance is false.
+         */
+        public string Needs { get; set; }
+
+        public ClaimDecl()
+        {
+            Path = "";
+            When = "";
+            Off = "";
+            Fallback = "";
+            Needs = "";
+        }
+    }
+
     public class ParamDecl
     {
         public string Key { get; set; }
@@ -90,14 +175,28 @@ namespace CraneLoader
 
     public static class ScriptHeader
     {
-        private const int LinesScanned = 60;
+        // Raised from 60 when @claims arrived. Steady Hands already spends
+        // twelve lines on @param before its prose block, and six claim lines on
+        // top of that put the last one past the old limit -- silently, since a
+        // declaration that is never read looks exactly like one that is absent.
+        // Scanning further costs a few more ReadLine calls on a file the manager
+        // is opening anyway.
+        private const int LinesScanned = 120;
 
         public static void Read(string path, out string name, out string description,
                                 out List<ParamDecl> parameters)
         {
+            List<ClaimDecl> ignored;
+            Read(path, out name, out description, out parameters, out ignored);
+        }
+
+        public static void Read(string path, out string name, out string description,
+                                out List<ParamDecl> parameters, out List<ClaimDecl> claims)
+        {
             name = "";
             description = "";
             parameters = new List<ParamDecl>();
+            claims = new List<ClaimDecl>();
             try
             {
                 using (StreamReader reader = new StreamReader(path))
@@ -114,6 +213,12 @@ namespace CraneLoader
                             ParamDecl declared = ParseParam(value);
                             if (declared != null && Find(parameters, declared.Key) == null)
                                 parameters.Add(declared);
+                        }
+                        else if (TryTag(line, "@claims", out value))
+                        {
+                            ClaimDecl claimed = ParseClaim(value);
+                            if (claimed != null && FindClaim(claims, claimed.Path) == null)
+                                claims.Add(claimed);
                         }
                     }
                 }
@@ -137,6 +242,58 @@ namespace CraneLoader
         public static ParamDecl ParseDeclaration(string text)
         {
             return ParseParam(text);
+        }
+
+        public static ClaimDecl FindClaim(List<ClaimDecl> claims, string path)
+        {
+            foreach (ClaimDecl claim in claims)
+                if (string.Equals(claim.Path, path, StringComparison.OrdinalIgnoreCase)) return claim;
+            return null;
+        }
+
+        // "var.DamageMulAll" or
+        // "interaction.BodyContainer.duration_scale when=body_containers".
+        //
+        // Deliberately thin. A claim is a Bridge path and at most one gate, and
+        // every option this grammar does not have is one nobody has to keep in
+        // agreement with the runtime.
+        private static ClaimDecl ParseClaim(string text)
+        {
+            List<Token> tokens = Tokenize(text);
+            if (tokens.Count == 0) return null;
+
+            ClaimDecl claim = new ClaimDecl();
+            claim.Path = tokens[0].Text;
+            // A path with an '=' in it is a `when=` written without its path, or
+            // some other malformed line. Either way it names nothing claimable.
+            if (claim.Path.Length == 0 || claim.Path.Length > 128) return null;
+            if (claim.Path.IndexOf('=') >= 0) return null;
+
+            // The same unquoted-prose trap ParseParam has: fallback= takes a
+            // sentence, and a sentence is the value an author is likeliest to
+            // type without quotes, because prose does not look like a value.
+            bool continuing = false;
+            for (int i = 1; i < tokens.Count; i++)
+            {
+                int eq = tokens[i].Text.IndexOf('=');
+                if (eq <= 0)
+                {
+                    if (continuing) claim.Fallback += " " + tokens[i].Text;
+                    continue;
+                }
+                string key = tokens[i].Text.Substring(0, eq).Trim().ToLowerInvariant();
+                string val = tokens[i].Text.Substring(eq + 1).Trim();
+                continuing = false;
+                if (key == "when") claim.When = val;
+                else if (key == "off") claim.Off = val;
+                else if (key == "needs") claim.Needs = val;
+                else if (key == "fallback")
+                {
+                    claim.Fallback = val;
+                    continuing = !tokens[i].Quoted;
+                }
+            }
+            return claim;
         }
 
         public static ParamDecl Find(List<ParamDecl> declared, string key)

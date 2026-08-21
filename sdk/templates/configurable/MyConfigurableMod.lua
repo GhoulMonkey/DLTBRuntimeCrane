@@ -3,6 +3,7 @@
 -- @description A configurable, reversible lease example.
 -- @param enabled bool default=true group="General" label="Enabled"
 -- @param scale number default=1 min=0 max=4 group="Tuning" label="Scale" desc="Example contribution written while this script is enabled."
+-- @claims interaction.Container.duration_scale when=enabled
 
 local enabled = params.enabled
 if enabled == nil then enabled = true end

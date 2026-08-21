@@ -71,19 +71,151 @@ namespace CraneLoader
          */
         public static readonly TimeSpan Freshness = TimeSpan.FromMinutes(5);
 
-        // Whether Crane has reported recently enough to be believed. The header
-        // bar's "Game: connected" and the per-script dots are the same claim and
-        // must not be able to disagree.
-        public static bool IsFresh(string folder)
+        /*
+         * Whether Crane's report describes the session in front of the user.
+         *
+         * The age window above was the wrong test and had to go, because the
+         * premise under it was false: Crane does not rewrite this file while the
+         * game runs. It writes it once per reload -- see write_status in
+         * Crane.c, called only from reload_scripts -- so in an ordinary session
+         * the file is written seconds after launch and never touched again.
+         *
+         * Judging it by age therefore does not decide whether the game is
+         * running, it decides whether the user has been playing for less than
+         * five minutes. Seven minutes in, with the game running, the scripts
+         * loaded and the console printing, the window said GAME STARTING and the
+         * per-script dots went blank. Nothing was wrong except the question.
+         *
+         * The real question is whether this report came from THIS run of the
+         * game, and the process start time answers it exactly. A report written
+         * after the process started is this session's, at any age. One written
+         * before it is a leftover, however recent -- which is the case the age
+         * window was there to catch, and this catches it strictly better: a
+         * restart invalidates the old report immediately rather than five
+         * minutes later.
+         *
+         * `gameStartedUtc` is null when the game is not running, or when its
+         * start time could not be read. Those are different situations and the
+         * caller has already distinguished them; this only has to handle the
+         * second, which falls back to the age window.
+         */
+        public static bool DescribesCurrentSession(string folder, DateTime? gameStartedUtc)
         {
+            return Judge(folder, true, gameStartedUtc).Current;
+        }
+
+        /*
+         * The verdict and the reason for it, decided together.
+         *
+         * One method rather than a test plus a sentence describing the test,
+         * because a sentence maintained separately from the rule it describes is
+         * a sentence that will eventually describe the previous rule. That is
+         * not hypothetical here: this indicator has now been wrong twice, the
+         * 2026-08-18 fix unified two readers of the same file for exactly this
+         * reason, and the surviving comment about the five-minute window went on
+         * asserting a premise that was already false.
+         *
+         * The reason exists because both defects were found by the user from a
+         * screenshot, and in both cases the screenshot showed the verdict and
+         * nothing about how it was reached -- so establishing why cost a round
+         * trip and, the first time, a wrong diagnosis. Hovering the capsule now
+         * answers it outright.
+         */
+        public class SessionVerdict
+        {
+            // Whether Crane's report describes the session in front of the user.
+            public bool Current;
+            // Why, in the user's own terms. Shown as the capsule's tooltip.
+            public string Reason;
+        }
+
+        public static SessionVerdict Judge(string folder, bool gameRunning, DateTime? gameStartedUtc)
+        {
+            SessionVerdict verdict = new SessionVerdict();
             string path = Path.Combine(folder, FileName);
+            bool exists;
+            DateTime written = DateTime.MinValue;
             try
             {
-                if (!File.Exists(path)) return false;
-                return DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < Freshness;
+                exists = File.Exists(path);
+                if (exists) written = File.GetLastWriteTimeUtc(path);
             }
-            catch (IOException) { return false; }
-            catch (UnauthorizedAccessException) { return false; }
+            catch (IOException) { exists = false; }
+            catch (UnauthorizedAccessException) { exists = false; }
+
+            if (!gameRunning)
+            {
+                verdict.Reason = exists
+                    ? "The game is not running. Crane's last report was written at " +
+                      Clock(written) + ", by an earlier session."
+                    : "The game is not running, and Crane has never written a status " +
+                      "report in this folder.";
+                return verdict;
+            }
+
+            if (!exists)
+            {
+                verdict.Reason = "The game is running, but Crane has not written a status " +
+                                 "report in this folder yet. It writes one when it loads the " +
+                                 "manifest, a second or two into the session.";
+                return verdict;
+            }
+
+            if (!gameStartedUtc.HasValue)
+            {
+                /*
+                 * The fallback, and it says so. If this indicator ever misbehaves
+                 * again, the first thing worth knowing is whether it was using
+                 * the good test or this one -- and that is invisible from the
+                 * outside, because both render the same two words.
+                 */
+                TimeSpan age = DateTime.UtcNow - written;
+                verdict.Current = age < Freshness;
+                verdict.Reason = "The game is running, but its start time could not be read -- " +
+                                 "it may be running elevated while this tool is not. Falling back " +
+                                 "to the report's age, which is unreliable: Crane writes this file " +
+                                 "when it loads scripts and not again, so a healthy session's " +
+                                 "report ages past this window. Last written " + Clock(written) +
+                                 ", " + Roughly(age) + " ago; believed for " +
+                                 (int)Freshness.TotalMinutes + " minutes.";
+                return verdict;
+            }
+
+            DateTime started = gameStartedUtc.Value;
+            verdict.Current = written >= started;
+            verdict.Reason = verdict.Current
+                ? "The game started at " + Clock(started) + " and Crane reported at " +
+                  Clock(written) + ", after it -- so this report is from the session now " +
+                  "running. Its age is not evidence of anything: Crane writes this file when " +
+                  "it loads scripts and not again."
+                : "The game started at " + Clock(started) + ", but Crane's last report is from " +
+                  Clock(written) + " -- before it, so that report describes an earlier session. " +
+                  "Waiting for Crane to report on this one.";
+            return verdict;
+        }
+
+        // Local time, because the user is comparing this against a clock on
+        // their own wall and a log printed in local time.
+        private static string Clock(DateTime utc)
+        {
+            return utc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        private static string Roughly(TimeSpan age)
+        {
+            if (age < TimeSpan.Zero) return "0s";
+            if (age.TotalMinutes < 1)
+                return (int)age.TotalSeconds + "s";
+            if (age.TotalHours < 1)
+                return (int)age.TotalMinutes + "m";
+            return (int)age.TotalHours + "h " + age.Minutes + "m";
+        }
+
+        // The age-only test, kept for the one caller that has no process to
+        // compare against: a folder inspected with the game not running.
+        public static bool IsFresh(string folder)
+        {
+            return DescribesCurrentSession(folder, null);
         }
 
         // Returns null when there is no current readable report -- Crane has not
@@ -92,12 +224,17 @@ namespace CraneLoader
         // Unknown rather than as an error.
         public static StatusReport Read(string folder)
         {
+            return Read(folder, null);
+        }
+
+        public static StatusReport Read(string folder, DateTime? gameStartedUtc)
+        {
             string path = Path.Combine(folder, FileName);
             string text;
             try
             {
                 if (!File.Exists(path)) return null;
-                if (!IsFresh(folder)) return null;
+                if (!DescribesCurrentSession(folder, gameStartedUtc)) return null;
                 using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                                                           FileShare.ReadWrite))
                 using (StreamReader reader = new StreamReader(stream))

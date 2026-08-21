@@ -92,6 +92,8 @@ namespace CraneLoader
                 Raise("Enabled");
                 Raise("Secondary");
                 Raise("StateBrush");
+                Raise("HasConflict");
+                Raise("ConflictTip");
                 if (_onToggled != null) _onToggled(this);
             }
         }
@@ -117,6 +119,28 @@ namespace CraneLoader
                     default:
                         break;
                 }
+                /*
+                 * Ahead of the settings count, and ahead of the description,
+                 * because those describe a script that is working and this one
+                 * is not.
+                 *
+                 * It sits below Failed and Missing on purpose: those are things
+                 * the runtime observed, this is something the manager predicted,
+                 * and an observation outranks a prediction when they disagree.
+                 */
+                if (_entry.Enabled && _entry.Conflict.Refused)
+                {
+                    ScriptConflict conflict = _entry.Conflict;
+                    string rival = conflict.Rival;
+                    if (conflict.Silenced)
+                        return "Does nothing while " + rival + " is on";
+                    if (conflict.Covered)
+                        return rival + " has it; " + conflict.Fallback;
+                    return string.Format(CultureInfo.InvariantCulture,
+                                         "{0} of {1} settings taken by {2}",
+                                         conflict.Lost.Count, conflict.Wanted, rival);
+                }
+
                 if (!_entry.Enabled) return "Off";
                 if (_entry.Declared.Count > 0)
                     return string.Format(CultureInfo.InvariantCulture, "{0} setting{1}",
@@ -161,12 +185,55 @@ namespace CraneLoader
             }
         }
 
+        /*
+         * The conflict marker: an amber dot, on the losing row only.
+         *
+         * Only the loser, though both sides of a clash are known. The winner is
+         * doing exactly what it was asked to; marking it too would put two
+         * warnings on the list for one problem and make the user check both to
+         * find out which of them is the broken one.
+         *
+         * It is a separate dot from StateBrush rather than another value of it
+         * because they answer different questions -- StateBrush is what the
+         * runtime reported, this is what the manifest implies -- and a script
+         * can perfectly well be reported Loaded and be refused every path it
+         * asked for. That combination is precisely the failure this feature
+         * exists to catch, so the two indicators must be able to show at once.
+         */
+        // Covered is excluded: the script declared what it does instead and it
+        // still works, so an amber dot would be raising an alarm about a
+        // situation its author already answered. The second line still says
+        // what is going on, because two scripts reaching for one lever is worth
+        // knowing even when it costs nothing.
+        public bool HasConflict
+        {
+            get { return _entry.Enabled && _entry.Conflict.Refused && !_entry.Conflict.Covered; }
+        }
+
+        public string ConflictTip
+        {
+            get
+            {
+                if (!HasConflict) return null;
+                ScriptConflict conflict = _entry.Conflict;
+                string paths = "";
+                foreach (ClaimClash clash in conflict.Lost)
+                    paths += (paths.Length == 0 ? "" : "\n") + clash.Path;
+                return string.Format(CultureInfo.InvariantCulture,
+                    "{0} sits higher in the load order and holds {1}:\n{2}\n\n" +
+                    "Select this script to move it above {0}, or turn one of them off.",
+                    conflict.Rival, conflict.Lost.Count == 1 ? "this path" : "these paths",
+                    paths);
+            }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
 
         public void RaiseAll()
         {
             Raise("Name"); Raise("Unnamed"); Raise("Enabled"); Raise("Secondary");
             Raise("StateBrush"); Raise("HasDot");
+            Raise("HasConflict"); Raise("ConflictTip");
         }
 
         private void Raise(string property)

@@ -137,6 +137,12 @@ assumes otherwise installs, validates and then does nothing at runtime.
 Among the static paths, only `hunger.drain_multiplier` is leasable. Most leasable
 targets live in the dynamic families, such as
 `interaction.<Class>.duration_scale`, which `examples/exclusive-lease.lua` uses.
+
+**`var.*` supports both.** A lease takes a variable exclusively; a modifier contributes a
+delta that the Bridge sums over the variable's vanilla value, so several scripts can raise one
+variable at once without one of them losing. Prefer the modifier unless your script genuinely
+has to be the only thing setting the value — and note the two exclude each other per variable:
+claiming one that has live contributions is refused, and so is contributing to a leased one.
 Check with `bridge.describe(path)` before writing a claim, unless the catalog
 already lists the path with `hold`.
 

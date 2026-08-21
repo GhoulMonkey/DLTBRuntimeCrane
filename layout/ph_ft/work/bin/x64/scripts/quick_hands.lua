@@ -8,7 +8,13 @@
 -- @param complex_containers bool default=true group="What to speed up" label="Complex containers" desc="Multi-slot containers such as vehicle storage."
 -- @param quest_inventory bool default=true group="What to speed up" label="Quest inventory items" desc="Quest items taken from the world."
 -- @param quest_lootables bool default=true group="What to speed up" label="Quest-lootable items" desc="Quest containers and bodies. Leave on unless a quest times you deliberately."
--- Quick Hands 3.1.0-dev.3 for Crane 2.0.0-dev.15.
+-- @claims interaction.BodyContainer.duration_scale when=body_containers
+-- @claims interaction.Container.duration_scale when=containers
+-- @claims interaction.CollectableObject.duration_scale when=collectables
+-- @claims interaction.ComplexContainer.duration_scale when=complex_containers
+-- @claims interaction.QuestInventoryItemDI.duration_scale when=quest_inventory
+-- @claims interaction.QuestLootableItem.duration_scale when=quest_lootables
+-- Quick Hands 3.1.0-dev.4 for Crane 2.3.0-dev.1.
 -- Requires AllowWrites=1 in DLTBRuntimeCrane.ini.
 
 -- Crane publishes manifest values but deliberately does not parse or enforce

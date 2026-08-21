@@ -39,6 +39,17 @@ namespace CraneLoader
         // knobs exist, and the manifest only on what they are set to.
         public List<ParamDecl> Declared { get; set; }
 
+        // The paths this script says it will take a lease on, re-read from its
+        // header alongside Declared and persisted no more than those are. Used
+        // only to work out, before the game is ever started, which two enabled
+        // scripts are about to fight over the same lever.
+        public List<ClaimDecl> Claims { get; set; }
+
+        // What that worked out to for this entry. Recomputed on every rebuild
+        // rather than stored, because it is a fact about the whole enabled set
+        // and stops being true the moment any other script is ticked.
+        public ScriptConflict Conflict { get; set; }
+
         public ScriptEntry()
         {
             Enabled = true;
@@ -48,6 +59,22 @@ namespace CraneLoader
             StateError = "";
             Params = new Dictionary<string, object>();
             Declared = new List<ParamDecl>();
+            Claims = new List<ClaimDecl>();
+            Conflict = new ScriptConflict();
+        }
+
+        // The value a claim's `when` gate is decided on: what the user set, or
+        // failing that what the script declared as the default. A script that
+        // has never been opened in this window has no stored parameters at all,
+        // and reading the gate as "off" for all of them would silence every
+        // warning on exactly the fresh install where it is most needed.
+        public object EffectiveValue(string key)
+        {
+            foreach (KeyValuePair<string, object> pair in Params)
+                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+                    return pair.Value;
+            ParamDecl declared = ScriptHeader.Find(Declared, key);
+            return declared != null ? declared.Default : null;
         }
 
         // A stored value whose declaration has gone -- a knob renamed or removed

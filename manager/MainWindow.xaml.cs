@@ -79,7 +79,7 @@ namespace CraneLoader
             }
 
             ApplyScale(Settings.LoadScale());
-            _reportWasFresh = GameLaunch.IsGameRunning() && StatusFile.IsFresh(_folder);
+            _reportWasFresh = Reporting();
             LoadManifest();
             BuildRows();
             UpdateConnection();
@@ -191,12 +191,29 @@ namespace CraneLoader
          * are trying to click it -- so the rows are refreshed only on the edge,
          * when the report crosses from current to stale or back.
          */
+        /*
+         * One question, asked in one place: is Crane's report describing the
+         * game currently running?
+         *
+         * It was written out longhand at three call sites, and the comment at
+         * each said "the same conjunction the others use", which is what a
+         * shared method is for. They agreed by discipline until the test itself
+         * had to change, at which point three separate edits was three chances
+         * to leave one behind saying something different.
+         */
+        private bool Reporting()
+        {
+            GameLaunch.GameProcess game = GameLaunch.Find();
+            return game.Running && StatusFile.DescribesCurrentSession(_folder, game.StartedUtc);
+        }
+
         private void OnHeartbeat()
         {
-            // The same conjunction LoadMetadata uses. Keying the edge on file
-            // age alone would leave the dots lit for five minutes after the game
-            // exited, which is the bug this pass is fixing one layer up.
-            bool fresh = GameLaunch.IsGameRunning() && StatusFile.IsFresh(_folder);
+            // The same test LoadMetadata uses. Keying the edge on file age
+            // alone would leave the dots lit for five minutes after the game
+            // exited -- and, once Crane stopped rewriting the file during a
+            // session, would blank them five minutes into one.
+            bool fresh = Reporting();
             UpdateConnection();
             if (fresh == _reportWasFresh) return;
             _reportWasFresh = fresh;
@@ -257,6 +274,11 @@ namespace CraneLoader
          */
         private void BuildRows()
         {
+            // Before any row is built, because the row's own second line reports
+            // the result and a row built from a stale calculation would name the
+            // wrong winner.
+            ClaimMap.Compute(_entries);
+
             List<ScriptRow> rows = new List<ScriptRow>();
             foreach (ScriptEntry entry in _entries)
             {
@@ -287,14 +309,50 @@ namespace CraneLoader
                 entry.Enabled = false;
                 string name, description;
                 List<ParamDecl> declared;
+                List<ClaimDecl> claims;
                 ScriptHeader.Read(Path.Combine(_folder, "scripts", file),
-                                  out name, out description, out declared);
+                                  out name, out description, out declared, out claims);
                 entry.Name = name;
                 entry.Description = description;
                 entry.Declared = declared;
+                entry.Claims = claims;
                 entry.State = ScriptState.Unknown;
                 rows.Add(new ScriptRow(entry, OnUnlistedToggled, true));
             }
+
+            /*
+             * Alphabetical, listed and unlisted together in one sequence.
+             *
+             * The list used to be in manifest order with the unlisted scripts
+             * appended, which meant a script's position encoded two things at
+             * once -- where to find it, and who wins a lease -- and served
+             * neither. Finding one took a scan of the whole list, because
+             * manifest order is arrival order and arrival order is meaningless
+             * to the reader; and the precedence it did encode was invisible
+             * anyway, since nothing on screen said what being third rather than
+             * fourth bought you.
+             *
+             * Precedence has not been given up, it has been moved somewhere it
+             * can be seen: the manifest still decides who wins, the amber dot
+             * says when that matters, and the detail pane names the rival and
+             * offers the one button that changes the outcome. Position in this
+             * list is now purely a way to find a script by name.
+             *
+             * Ordinal-insensitive rather than culture-aware, so the list does not
+             * reshuffle itself on a machine with a different locale.
+             */
+            rows.Sort(delegate(ScriptRow left, ScriptRow right)
+            {
+                int byName = string.Compare(left.Name, right.Name,
+                                            StringComparison.OrdinalIgnoreCase);
+                // Two scripts can declare the same @name -- a copy taken for
+                // experiments is the usual way -- and a comparison that called
+                // them equal would leave their order down to the sort, which is
+                // to say arbitrary and unstable between rebuilds.
+                return byName != 0
+                    ? byName
+                    : string.Compare(left.File, right.File, StringComparison.OrdinalIgnoreCase);
+            });
 
             // Keep the selection across a rebuild. Ticking a script rebuilds the
             // list, and losing the detail pane at that moment is disorienting --
@@ -426,7 +484,43 @@ namespace CraneLoader
         private void OnRowToggled(ScriptRow row)
         {
             Save();
+            /*
+             * Ticking one script changes what every other script gets.
+             *
+             * This is the case the feature was asked for: Quick Hands is already
+             * on, Steady Hands is ticked, and the row that has to change is
+             * Steady Hands' -- but turning Quick Hands OFF has to clear the
+             * warning on Steady Hands too, and that is a row nobody touched.
+             * A rebuild would resort the list under the cursor at the moment of
+             * a click, so instead the calculation is redone and the existing
+             * rows are asked to reread it.
+             */
+            RefreshConflicts(true);
             UpdateSummary();
+        }
+
+        /*
+         * `redrawDetail` is false when the change came from inside the detail
+         * pane itself. Rebuilding the pane under the user's hands would take the
+         * focus out of the control they are still editing -- a slider being
+         * dragged, a number half typed -- and it is the same hazard
+         * DetailHasFocus already guards elsewhere.
+         */
+        private void RefreshConflicts(bool redrawDetail)
+        {
+            ClaimMap.Compute(_entries);
+            System.Collections.IEnumerable rows = ScriptList.ItemsSource as System.Collections.IEnumerable;
+            if (rows != null)
+                foreach (object item in rows)
+                {
+                    ScriptRow candidate = item as ScriptRow;
+                    if (candidate != null) candidate.RaiseAll();
+                }
+            // The detail pane states the conflict in full, so it goes stale for
+            // the same reason the rows do.
+            if (!redrawDetail) return;
+            ScriptRow selected = ScriptList.SelectedItem as ScriptRow;
+            if (selected != null && !DetailHasFocus()) ShowDetail(selected);
         }
 
         // Ticking an unlisted script is how it joins the list. The file turning
@@ -1110,28 +1204,33 @@ namespace CraneLoader
         private void LoadMetadata()
         {
             // A report from a process that has exited describes nothing current,
-            // however recently it was written. The age check stays as well: the
-            // game can be running while Crane has not reported yet.
-            StatusReport report = GameLaunch.IsGameRunning() ? StatusFile.Read(_folder) : null;
+            // however recently it was written; and one written before this run
+            // of the game started describes the previous run. Both are the same
+            // comparison, so both live in DescribesCurrentSession.
+            GameLaunch.GameProcess game = GameLaunch.Find();
+            StatusReport report = game.Running ? StatusFile.Read(_folder, game.StartedUtc) : null;
             foreach (ScriptEntry entry in _entries)
             {
                 string script = Path.Combine(_folder, "scripts", entry.File);
                 entry.Missing = !File.Exists(script);
                 string name, description;
                 List<ParamDecl> declared;
+                List<ClaimDecl> claims;
                 if (entry.Missing)
                 {
                     name = entry.File;
                     description = "Not present in \\scripts";
                     declared = new List<ParamDecl>();
+                    claims = new List<ClaimDecl>();
                 }
                 else
                 {
-                    ScriptHeader.Read(script, out name, out description, out declared);
+                    ScriptHeader.Read(script, out name, out description, out declared, out claims);
                 }
                 entry.Name = name;
                 entry.Description = description;
                 entry.Declared = declared;
+                entry.Claims = claims;
                 entry.State = report == null ? ScriptState.Unknown : report.StateOf(entry.File);
                 entry.StateError = report == null ? "" : report.ErrorOf(entry.File);
             }
@@ -1141,43 +1240,62 @@ namespace CraneLoader
          * "Game: Connected" answers the question the old window could not: is any
          * of this reaching the game at all?
          *
-         * Inferred from the status file's age, because Crane rewrites it on every
-         * reload and cannot write it when the game is not running. A stale file is
-         * therefore evidence of absence, and without this the user cannot tell a
-         * broken script from a game that is not running.
+         * Two facts, never one: the game process, and whether Crane's report
+         * belongs to the run of it that is up now. Without the second, a broken
+         * script and a game that is not running look the same.
+         *
+         * This comment said the answer was "inferred from the status file's age,
+         * because Crane rewrites it on every reload". Crane does not: it writes
+         * the file from reload_scripts and nowhere else, so an untouched session
+         * writes it once. See StatusFile.Judge.
          */
         private void UpdateConnection()
         {
-            string status = Path.Combine(_folder, StatusFile.FileName);
             /*
              * Two facts, reported as three states, because conflating them is
              * what made this wrong twice.
              *
              *   is the game running  -- the process. Ground truth.
-             *   has Crane reported   -- the status file's age.
+             *   has Crane reported   -- its report against the process start.
              *
-             * "Connected" was previously the second fact alone, so it went on
-             * claiming a connection for up to five minutes after the game had
-             * exited: a report written five seconds ago and a game that died
-             * four minutes ago are indistinguishable by age alone. Asking about
-             * the process makes the answer immediate and exact.
+             * "Connected" was previously the second fact alone, expressed as
+             * file age, so it went on claiming a connection for up to five
+             * minutes after the game had exited: a report written five seconds
+             * ago and a game that died four minutes ago are indistinguishable by
+             * age alone. Asking about the process makes the answer immediate and
+             * exact -- and once the process is being asked anyway, its start
+             * time replaces the age window outright.
              *
              * The middle state earns its own wording rather than being folded
              * into either neighbour, because between clicking Launch and Crane's
              * first report there are several seconds in which neither "not
              * running" nor "connected" is true.
              */
-            bool gameUp = GameLaunch.IsGameRunning();
-            bool reporting = gameUp && StatusFile.IsFresh(_folder);
+            GameLaunch.GameProcess game = GameLaunch.Find();
+            bool gameUp = game.Running;
+            StatusFile.SessionVerdict verdict = StatusFile.Judge(_folder, gameUp, game.StartedUtc);
+            bool reporting = verdict.Current;
             /* Three states, one vocabulary, and the same words in the capsule
                and the status bar. */
             ConnectionText.Text = reporting ? "GAME ATTACHED"
                                 : gameUp ? "GAME STARTING"
                                 : "GAME OFFLINE";
             bool running = reporting;
-            ConnectionText.ToolTip = File.Exists(status)
-                ? "Last report from Crane: " + File.GetLastWriteTime(status).ToString("HH:mm:ss")
-                : "Crane has not written a status report in this folder yet.";
+            /*
+             * The capsule says why, not just what.
+             *
+             * It used to report the timestamp alone -- true, and useless for the
+             * question anyone actually hovers it to ask, which is "the game is
+             * plainly running, so why does this not say so". Both times this
+             * indicator has been wrong, the evidence available to the user was
+             * two words on a screenshot, and working back to the cause took a
+             * round trip. The reason comes from the same call that decides the
+             * verdict, so it cannot describe a rule that is no longer in force.
+             *
+             * On the capsule rather than the text: it is the whole hover target,
+             * dot included, and the dot is the part people point at.
+             */
+            ConnectionCapsule.ToolTip = verdict.Reason;
 
             // Qualified: this file uses System.IO.Path, so importing
             // System.Windows.Shapes would make every Path.Combine ambiguous.
@@ -1190,14 +1308,162 @@ namespace CraneLoader
             ConnectionCapsule.SetResourceReference(Border.BorderBrushProperty,
                 running ? "AccentDim" : "Rule");
 
-            // Persistent instrumentation, right-aligned, distinct from the
-            // transient prose on the left. Counts plus the same state word.
-            int total = _entries.Count;
-            int on = 0;
-            foreach (ScriptEntry entry in _entries) if (entry.Enabled) on++;
+            /*
+             * Persistent instrumentation, right-aligned, distinct from the
+             * transient prose on the left. Counts plus the same state word.
+             *
+             * Counted from the rows, not from _entries. It counted _entries and
+             * so disagreed with the left-hand end of the same status bar --
+             * "10 scripts" beside "14 SCRIPTS", in one screenshot, four of them
+             * manifest entries whose file is not in \scripts and which are
+             * therefore not shown. UpdateSummary already carries the note about
+             * why the visible rows are the honest number; this end of the bar
+             * was still using the other one.
+             */
+            int total, on;
+            CountScripts(out total, out on);
             StatusRight.Text = string.Format(CultureInfo.InvariantCulture,
                 "{0} SCRIPT{1}  •  {2} ENABLED  •  {3}",
                 total, total == 1 ? "" : "S", on, ConnectionText.Text);
+        }
+
+        /*
+         * The conflict block: who is taking what, and the one button that
+         * changes it.
+         *
+         * Placed above the description and the settings for the same reason the
+         * load failure is: somebody whose script is being refused its levers has
+         * no use for a list of knobs that will not be read.
+         *
+         * The paths are named in full rather than counted. They are Bridge paths
+         * and they mean something to the kind of person who installed two
+         * scripts that fight -- and when the overlap is partial, which six of
+         * eight is the whole question.
+         */
+        private void ShowConflict(ScriptEntry entry)
+        {
+            ScriptConflict conflict = entry.Conflict;
+            if (!entry.Enabled) return;
+            if (!conflict.Refused && conflict.Won.Count == 0) return;
+
+            Border block = new Border();
+            block.SetResourceReference(Border.BackgroundProperty, "SurfaceAlert");
+            block.SetResourceReference(Border.BorderBrushProperty,
+                conflict.Refused && !conflict.Covered ? "StateWarn" : "Rule");
+            block.BorderThickness = new Thickness(3, 0, 0, 0);
+            block.Padding = new Thickness(10, 8, 10, 8);
+            block.Margin = new Thickness(0, 12, 0, 0);
+
+            StackPanel body = new StackPanel();
+
+            TextBlock headline = new TextBlock();
+            headline.TextWrapping = TextWrapping.Wrap;
+            headline.SetResourceReference(TextBlock.ForegroundProperty, "Ink");
+            if (conflict.Silenced)
+                headline.Text = "This script will do nothing. " + conflict.Rival +
+                                " loads first and holds everything it asks for.";
+            else if (conflict.Covered)
+                headline.Text = conflict.Rival + " loads first and holds what this " +
+                                "script asks for, and this script " + conflict.Fallback +
+                                ". Nothing is lost, but only one of them is driving " +
+                                "these settings directly.";
+            else if (conflict.Refused)
+                headline.Text = string.Format(CultureInfo.InvariantCulture,
+                    "Partly overridden. {0} loads first and holds {1} of the {2} " +
+                    "settings this script asks for.",
+                    conflict.Rival, conflict.Lost.Count, conflict.Wanted);
+            else
+                headline.Text = "This script loads first and holds settings that " +
+                                OtherSide(conflict.Won) + " also asks for.";
+            body.Children.Add(headline);
+
+            TextBlock paths = new TextBlock();
+            paths.Text = PathList(conflict.Refused ? conflict.Lost : conflict.Won);
+            paths.Style = (Style)FindResource("Subtle");
+            paths.TextWrapping = TextWrapping.Wrap;
+            paths.Margin = new Thickness(0, 6, 0, 0);
+            body.Children.Add(paths);
+
+            /*
+             * Only the losing side gets a button, and it does the one thing that
+             * resolves the standoff without asking the user to hold the load
+             * order in their head: put this script directly above the script
+             * beating it. The alternative -- turn one of them off -- is the
+             * checkbox they already have.
+             *
+             * This is what the Move up / Move down pair could not do once the
+             * list went alphabetical: those still move a script through the load
+             * order, but the position they move it to is no longer visible, so
+             * "above that one" had to become expressible directly.
+             */
+            if (conflict.Refused && conflict.RivalFile.Length > 0)
+            {
+                Button promote = new Button();
+                promote.Content = "Run this one instead";
+                promote.Padding = new Thickness(12, 4, 12, 4);
+                promote.HorizontalAlignment = HorizontalAlignment.Left;
+                promote.Margin = new Thickness(0, 10, 0, 0);
+                promote.ToolTip = "Moves this script above " + conflict.Rival +
+                                  " in the load order, so it claims first. " +
+                                  conflict.Rival + " is then the one refused.";
+                string rivalFile = conflict.RivalFile;
+                promote.Click += delegate { PromoteAbove(entry, rivalFile); };
+                body.Children.Add(promote);
+            }
+
+            block.Child = body;
+            Detail.Children.Add(block);
+        }
+
+        // "and Steady Hands" / "and 3 other scripts". Naming every loser in a
+        // headline is unreadable past two, and the losers each carry the full
+        // statement on their own row anyway.
+        private static string OtherSide(List<ClaimClash> clashes)
+        {
+            List<string> names = new List<string>();
+            foreach (ClaimClash clash in clashes)
+                if (!names.Contains(clash.OtherName)) names.Add(clash.OtherName);
+            if (names.Count == 1) return names[0];
+            if (names.Count == 2) return names[0] + " and " + names[1];
+            return string.Format(CultureInfo.InvariantCulture, "{0} and {1} other scripts",
+                                 names[0], names.Count - 1);
+        }
+
+        private static string PathList(List<ClaimClash> clashes)
+        {
+            string text = "";
+            List<string> seen = new List<string>();
+            foreach (ClaimClash clash in clashes)
+            {
+                if (seen.Contains(clash.Path)) continue;
+                seen.Add(clash.Path);
+                text += (text.Length == 0 ? "" : "\n") + clash.Path;
+            }
+            return text;
+        }
+
+        /*
+         * Moves an entry to sit immediately above the entry beating it.
+         *
+         * Directly above rather than to the top of the manifest: the user asked
+         * to beat one script, and hoisting past every other script would also
+         * silently take paths off a third one that had nothing to do with it.
+         */
+        private void PromoteAbove(ScriptEntry entry, string rivalFile)
+        {
+            int from = _entries.IndexOf(entry);
+            int to = -1;
+            for (int i = 0; i < _entries.Count; i++)
+                if (string.Equals(_entries[i].File, rivalFile, StringComparison.OrdinalIgnoreCase))
+                { to = i; break; }
+            if (from < 0 || to < 0 || to >= from) return;
+
+            _entries.RemoveAt(from);
+            _entries.Insert(to, entry);
+            Save();
+            RefreshConflicts(true);
+            UpdateSummary();
+            StatusText.Text = entry.Name + " now loads first.";
         }
 
         /*
@@ -1256,6 +1522,8 @@ namespace CraneLoader
                 Detail.Children.Add(alert);
             }
 
+            ShowConflict(entry);
+
             if (entry.Description.Length > 0)
             {
                 TextBlock description = new TextBlock();
@@ -1278,7 +1546,11 @@ namespace CraneLoader
              * alphabetically. The author wrote them in an order, that order
              * usually means something -- the main lever first, the fiddly bits
              * after -- and sorting would throw away information the manager
-             * cannot recover. Same reason the script list is unsorted.
+             * cannot recover.
+             *
+             * Not the same question as the script list, which IS sorted: there
+             * the order carried no authored meaning, only arrival order, and
+             * sorting it threw away nothing.
              *
              * Ungrouped settings keep the plain "Settings" heading and come
              * first, so a script that declares no groups renders exactly as it
@@ -1331,26 +1603,32 @@ namespace CraneLoader
                 ShowDetail(ScriptList.SelectedItem as ScriptRow);
             };
             /*
-             * Load order, restored.
+             * Load order, which is no longer list order.
              *
              * The WinForms window had Move up and Move down; the WPF port
              * silently dropped them, and nothing noticed because order is
-             * invisible until two scripts want the same thing.
+             * invisible until two scripts want the same thing. They came back,
+             * and then the list went alphabetical -- so the row does not move
+             * when these are pressed, and the wording had to stop implying it
+             * does. They move the script through the LOAD order, which is what
+             * they always actually did; while the list happened to be in that
+             * order too, "Move up" could get away with describing the side
+             * effect instead of the effect.
              *
              * Leases are exclusive per path, so when two enabled scripts claim
-             * one path the higher manifest entry wins and the lower is refused.
-             * Without these buttons the only way to decide which script wins was
-             * to hand-edit the manifest, which is the thing this tool exists to
-             * avoid.
+             * one path the earlier-loading entry wins and the other is refused.
+             * For the case that motivates all of this -- two scripts already
+             * fighting -- the conflict block above is the direct route and these
+             * are the general one.
              */
             Button up = new Button();
-            up.Content = "Move up";
+            up.Content = "Load earlier";
             up.Padding = new Thickness(12, 4, 12, 4);
             up.IsEnabled = _entries.IndexOf(entry) > 0;
             up.Click += delegate { MoveSelected(-1); };
 
             Button down = new Button();
-            down.Content = "Move down";
+            down.Content = "Load later";
             down.Padding = new Thickness(12, 4, 12, 4);
             down.Margin = new Thickness(8, 0, 0, 0);
             int at = _entries.IndexOf(entry);
@@ -1365,9 +1643,23 @@ namespace CraneLoader
             order.Children.Add(down);
             Detail.Children.Add(order);
 
-            Detail.Children.Add(Muted(
-                "Order decides who wins. If two enabled scripts claim the same " +
-                "thing, the one higher in this list gets it and the other is refused."));
+            /*
+             * An unlisted script has no manifest position to state. It gets a
+             * place in the load order by being ticked, and quoting a number for
+             * it -- or worse, IndexOf's -1 rendered as "loads 0 of 9" -- would
+             * be inventing a fact about a file the manifest has never seen.
+             */
+            Detail.Children.Add(Muted(row.Unlisted
+                ? "Not in the load order yet. Ticking this script puts it at the " +
+                  "end, where it claims last. Order decides who wins: if two " +
+                  "enabled scripts claim the same thing, the one that loads first " +
+                  "gets it and the other is refused."
+                : string.Format(CultureInfo.InvariantCulture,
+                    "Loads {0} of {1}. The list is alphabetical, so this is not the " +
+                    "position shown on the left. Order decides who wins: if two " +
+                    "enabled scripts claim the same thing, the one that loads first " +
+                    "gets it and the other is refused.",
+                    _entries.IndexOf(entry) + 1, _entries.Count)));
 
             StackPanel actions = new StackPanel();
             actions.Orientation = Orientation.Horizontal;
@@ -1820,6 +2112,11 @@ namespace CraneLoader
         {
             entry.Params[key] = value;
             Save();
+            // A parameter can be the gate on a claim -- Steady Hands stops
+            // wanting interaction.Container.duration_scale the moment its
+            // Containers tick comes off -- so the warning has to follow the
+            // setting rather than wait for the next reload.
+            RefreshConflicts(false);
         }
 
         private TextBlock Muted(string message)
@@ -1841,17 +2138,34 @@ namespace CraneLoader
          * entry yet is the manager's own bookkeeping, and saying it out loud
          * only invited the reader to wonder what it meant.
          */
+        // A script means a row: a file in \scripts. Both ends of the status bar
+        // count through here so they cannot disagree again.
+        private void CountScripts(out int total, out int enabled)
+        {
+            total = 0;
+            enabled = 0;
+            System.Collections.IEnumerable rows = ScriptList.ItemsSource as System.Collections.IEnumerable;
+            if (rows == null) return;
+            foreach (object item in rows)
+            {
+                ScriptRow row = item as ScriptRow;
+                if (row == null) continue;
+                total++;
+                if (row.Enabled) enabled++;
+            }
+        }
+
         private void UpdateSummary()
         {
-            int total = 0, enabled = 0, failed = 0, reported = 0;
+            int total, enabled;
+            CountScripts(out total, out enabled);
+            int failed = 0, reported = 0;
             System.Collections.IEnumerable rows = ScriptList.ItemsSource as System.Collections.IEnumerable;
             if (rows != null)
                 foreach (object item in rows)
                 {
                     ScriptRow row = item as ScriptRow;
                     if (row == null) continue;
-                    total++;
-                    if (row.Enabled) enabled++;
                     if (row.Entry.State == ScriptState.Failed ||
                         row.Entry.State == ScriptState.Missing) failed++;
                     if (row.Entry.State != ScriptState.Unknown) reported++;

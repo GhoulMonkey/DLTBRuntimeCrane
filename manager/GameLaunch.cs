@@ -88,13 +88,57 @@ namespace CraneLoader
          */
         public const string ProcessName = "DyingLightGame_TheBeast_x64_rwdi";
 
-        public static bool IsGameRunning()
+        /*
+         * The game process, and when it started.
+         *
+         * The start time is the second half of the answer, and without it the
+         * first half is not enough. Crane writes its status file once per reload
+         * and never again, so during ordinary play that file is minutes or hours
+         * old while everything it says is still true. Anything that judges the
+         * report by its age therefore stops believing a running session after a
+         * few minutes. The window did that, sitting on "GAME STARTING" seven
+         * minutes into a game that was plainly running.
+         *
+         * Comparing the report against the process start answers the question
+         * that was actually being asked -- is this report from the session in
+         * front of me -- with no window to tune and no way to decay.
+         */
+        public class GameProcess
         {
+            public bool Running;
+            // Null when the process is gone, or when the start time could not be
+            // read. Callers must handle that rather than assume a time.
+            public DateTime? StartedUtc;
+        }
+
+        public static GameProcess Find()
+        {
+            GameProcess found = new GameProcess();
             try
             {
-                return System.Diagnostics.Process.GetProcessesByName(ProcessName).Length > 0;
+                System.Diagnostics.Process[] all =
+                    System.Diagnostics.Process.GetProcessesByName(ProcessName);
+                if (all.Length == 0) return found;
+                found.Running = true;
+                /*
+                 * StartTime can fail where GetProcessesByName does not: it needs
+                 * more access to the process than merely seeing it in the list,
+                 * and the game running elevated while this tool does not is an
+                 * ordinary arrangement rather than an exotic one. Left null
+                 * there, which sends the caller to the age window it used
+                 * before -- a worse answer, but the one that was shipping, and
+                 * better than a crash or a hard "not connected".
+                 */
+                try { found.StartedUtc = all[0].StartTime.ToUniversalTime(); }
+                catch (Exception) { found.StartedUtc = null; }
+                return found;
             }
-            catch (Exception) { return false; }
+            catch (Exception) { return new GameProcess(); }
+        }
+
+        public static bool IsGameRunning()
+        {
+            return Find().Running;
         }
 
         public static bool IsSteamClientRunning()

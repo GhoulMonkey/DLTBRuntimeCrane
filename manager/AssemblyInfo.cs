@@ -23,8 +23,8 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyCopyright("Provided as-is under the Crane project's terms.")]
 
 // Numeric fields cannot carry a pre-release suffix; the informational version can.
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyInformationalVersion("2.2.0")]
+[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyFileVersion("2.3.0.0")]
+[assembly: AssemblyInformationalVersion("2.3.0")]
 
 [assembly: ComVisible(false)]

@@ -22,6 +22,21 @@
         },
         "additionalProperties": false
       }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "when": { "type": "string" },
+          "off": { "type": "string" },
+          "fallback": { "type": "string" },
+          "needs": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

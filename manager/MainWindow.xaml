@@ -193,10 +193,23 @@
                 <TextBlock Grid.Column="1" Grid.Row="0" Text="{Binding Name}"
                            Margin="8,0,0,0" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"/>
-                <Ellipse Grid.Column="2" Grid.Row="0" Width="8" Height="8"
-                         VerticalAlignment="Center" Margin="8,0,2,0"
-                         Fill="{Binding StateBrush, Converter={StaticResource BrushLookup}}"
-                         Visibility="{Binding HasDot, Converter={StaticResource ShowIf}}"/>
+                <!-- Two dots, not one. The right-hand dot is what the runtime
+                     reported; this amber one is a lease this script will be
+                     refused, worked out from the manifest without the game
+                     running. A script can be Loaded and refused at the same
+                     time, so neither dot can stand in for the other. -->
+                <StackPanel Grid.Column="2" Grid.Row="0" Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Margin="8,0,0,0"
+                           Fill="{DynamicResource StateWarn}"
+                           ToolTip="{Binding ConflictTip}"
+                           Visibility="{Binding HasConflict, Converter={StaticResource ShowIf}}"/>
+                  <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                           Margin="8,0,2,0"
+                           Fill="{Binding StateBrush, Converter={StaticResource BrushLookup}}"
+                           Visibility="{Binding HasDot, Converter={StaticResource ShowIf}}"/>
+                </StackPanel>
 
                 <TextBlock Grid.Column="1" Grid.Row="1" Grid.ColumnSpan="2"
                            Text="{Binding Secondary}" Margin="8,1,0,0"

@@ -27,10 +27,14 @@ try {
 
 if ($text.IndexOf([char]0) -ge 0) { Add-Error 'script contains a NUL byte' }
 $lines = @($text -split "`r?`n")
-$header = @($lines | Select-Object -First 60)
+# 120 to match ScriptHeader.LinesScanned in CraneLoader. The two must agree: a
+# declaration this validator cannot see is one it cannot check, and a
+# declaration the manager cannot see is one that silently does nothing.
+$header = @($lines | Select-Object -First 120)
 $name = $null
 $description = $null
 $params = @{}
+$claims = [Collections.Generic.List[hashtable]]::new()
 
 function Split-Tokens([string]$Value) {
     $matches = [regex]::Matches($Value, '"[^"\r\n]*"|\S+')
@@ -75,10 +79,59 @@ foreach ($line in $header) {
         if ($type -in @('bool','boolean') -and $options.ContainsKey('default') -and $options.default -notin @('true','false','0','1')) { Add-Error "boolean '$key' has invalid default" }
         $params[$folded] = $true
     }
+    elseif ($line -match '^\s*--\s*@claims(?:\s+|\s*:\s*)(.+?)\s*$') {
+        $tokens = @(Split-Tokens $Matches[1])
+        $claimPath = $tokens[0]
+        if ($claimPath -match '=') { Add-Error "invalid @claims declaration: $line"; continue }
+        $claimOptions = @{}
+        if ($tokens.Count -gt 1) {
+            foreach ($token in $tokens[1..($tokens.Count - 1)]) {
+                if ($token -notmatch '^([^=]+)=(.*)$') { continue }
+                $option = $Matches[1].ToLowerInvariant()
+                $value = $Matches[2]
+                if ($value.StartsWith('"') -and $value.EndsWith('"')) { $value = $value.Substring(1, $value.Length - 2) }
+                if ($option -notin @('when','off','fallback','needs')) { Add-Warning "claim '$claimPath' has unknown option '$option'" }
+                $claimOptions[$option] = $value
+            }
+        }
+        # needs= without fallback= is a no-op that reads as if it did something.
+        if ($claimOptions.ContainsKey('needs') -and -not $claimOptions.ContainsKey('fallback')) {
+            Add-Warning "claim '$claimPath' has needs= without fallback=, which does nothing"
+        }
+        if ($claimOptions.ContainsKey('off') -and -not $claimOptions.ContainsKey('when')) {
+            Add-Warning "claim '$claimPath' has off= without when=, which does nothing"
+        }
+        $claims.Add(@{ path = $claimPath; options = $claimOptions; line = $line })
+    }
 }
 
-if ([string]::IsNullOrWhiteSpace($name)) { Add-Error 'missing @name in the first 60 lines' }
-if ([string]::IsNullOrWhiteSpace($description)) { Add-Error 'missing @description in the first 60 lines' }
+<#
+    @claims cross-checks, after the loop because a gate may name a parameter
+    declared below it.
+
+    A when= naming a parameter that does not exist fails silently and in the
+    reassuring direction -- the manager reads the missing value as "on", so the
+    warning still appears and nobody finds out the gate was never wired up. That
+    is exactly the class of typo a validator is for.
+#>
+foreach ($claim in $claims) {
+    $gate = $claim.options['when']
+    if ($gate -and -not $params.ContainsKey($gate.ToLowerInvariant())) {
+        Add-Error "claim '$($claim.path)' is gated on '$gate', which is not a declared @param"
+    }
+    if ($claim.options['needs'] -and $claim.options['needs'] -notmatch '\.lua$') {
+        Add-Warning "claim '$($claim.path)' has needs='$($claim.options['needs'])', which is not a script filename"
+    }
+}
+
+# A script that leases without declaring gets no conflict warning in
+# CraneLoader, which is indistinguishable from a script that never conflicts.
+if ($text -match '\bbridge\.claim\s*\(' -and $claims.Count -eq 0) {
+    Add-Warning 'script calls bridge.claim but declares no @claims; CraneLoader cannot warn about lease conflicts'
+}
+
+if ([string]::IsNullOrWhiteSpace($name)) { Add-Error 'missing @name in the first 120 lines' }
+if ([string]::IsNullOrWhiteSpace($description)) { Add-Error 'missing @description in the first 120 lines' }
 foreach ($library in @('os','io','debug','package')) {
     if ($text -match "(?m)(^|[^A-Za-z0-9_])$library\s*[\[\.]" -or $text -match "\brequire\s*\(") { Add-Error "uses unavailable Lua library/function '$library'" }
 }

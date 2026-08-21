@@ -9,6 +9,8 @@ It contains no game runtime, ASI, loader, native header, address or game file.
 
 1. Copy `templates/minimal` or `templates/configurable` into your own folder.
 2. Rename the `.lua` file and edit its `@name`, `@description` and optional `@param` lines.
+   If it takes leases, declare them with `@claims` so CraneLoader can warn about a clash
+   with another enabled script.
 3. Open the SDK folder in an editor. `.luarc.json` and `library/crane.lua` provide
    Lua Language Server completion for the global `bridge` and `params` tables.
 4. Validate:

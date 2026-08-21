@@ -609,6 +609,86 @@ internal static class TestManifest
             Check(!StatusFile.IsFresh(Path.Combine(dir, "nope")),
                   "a folder with no report is not fresh");
 
+            // The report is judged against the game's start time rather than its
+            // age. Crane writes the status file from reload_scripts and nowhere
+            // else, so an untouched session's report ages past any window while
+            // still describing that session correctly.
+            DateTime launched = DateTime.UtcNow - TimeSpan.FromHours(2);
+            File.SetLastWriteTimeUtc(path, launched + TimeSpan.FromSeconds(20));
+
+            Check(!StatusFile.IsFresh(dir),
+                  "a two-hour-old report fails the age window, as it always did");
+            Check(StatusFile.DescribesCurrentSession(dir, launched),
+                  "but it describes the session that started before it was written");
+            StatusReport current = StatusFile.Read(dir, launched);
+            Check(current != null && current.StateOf("a.lua") == ScriptState.Loaded,
+                  "so its states are read however old the file is");
+
+            // The case the age window existed for. A relaunch invalidates the
+            // previous report at once rather than five minutes later.
+            DateTime relaunched = DateTime.UtcNow - TimeSpan.FromSeconds(5);
+            File.SetLastWriteTimeUtc(path, relaunched - TimeSpan.FromSeconds(1));
+            Check(StatusFile.IsFresh(dir), "a report written a moment ago passes the age window");
+            Check(!StatusFile.DescribesCurrentSession(dir, relaunched),
+                  "but not if this run of the game started after it was written");
+            Check(StatusFile.Read(dir, relaunched) == null,
+                  "and it reads as no report rather than as the previous session's");
+
+            // An unreadable start time -- the game elevated, the tool not --
+            // falls back to the age window rather than to "not connected".
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+            Check(StatusFile.DescribesCurrentSession(dir, null),
+                  "with no start time available, a recent report is still believed");
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow - StatusFile.Freshness - TimeSpan.FromMinutes(1));
+            Check(!StatusFile.DescribesCurrentSession(dir, null),
+                  "and an old one is not");
+
+            // The reason shown in the capsule's tooltip. It has to be accurate
+            // in the states where the verdict is surprising, and it has to keep
+            // agreeing with the verdict, which is why one call decides both.
+            File.SetLastWriteTimeUtc(path, launched + TimeSpan.FromSeconds(20));
+
+            StatusFile.SessionVerdict attached = StatusFile.Judge(dir, true, launched);
+            Check(attached.Current, "a two-hour-old report from this session is current");
+            Check(attached.Reason.Contains("after it"),
+                  "and the reason says the report came after the game started");
+            Check(attached.Reason.Contains("age is not evidence"),
+                  "and addresses the age directly");
+
+            StatusFile.SessionVerdict previous = StatusFile.Judge(dir, true, relaunched);
+            Check(!previous.Current, "a report from before this run is not current");
+            Check(previous.Reason.Contains("earlier session") &&
+                  previous.Reason.Contains("Waiting"),
+                  "and the reason says whose report it is and what happens next");
+
+            StatusFile.SessionVerdict offline = StatusFile.Judge(dir, false, null);
+            Check(!offline.Current, "with the game down, nothing is current");
+            Check(offline.Reason.Contains("not running"), "and the reason says so first");
+
+            StatusFile.SessionVerdict noReport =
+                StatusFile.Judge(Path.Combine(dir, "nope"), true, launched);
+            Check(!noReport.Current, "a folder with no report is not current");
+            Check(noReport.Reason.Contains("has not written"),
+                  "and the reason distinguishes never-written from written-earlier");
+
+            // Which of the two tests produced a verdict is invisible from
+            // outside, since both render the same two words, so the fallback
+            // names itself.
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow - TimeSpan.FromMinutes(1));
+            StatusFile.SessionVerdict fallback = StatusFile.Judge(dir, true, null);
+            Check(fallback.Current, "with no start time, a recent report still counts");
+            Check(fallback.Reason.Contains("start time could not be read"),
+                  "and the reason says the start-time test was unavailable");
+            Check(fallback.Reason.Contains("elevated"),
+                  "names the case that produces it");
+            Check(fallback.Reason.Contains("unreliable"),
+                  "and does not present the fallback as trustworthy");
+
+            foreach (DateTime? start in new DateTime?[] { launched, relaunched, null })
+                Check(StatusFile.Judge(dir, true, start).Current ==
+                      StatusFile.DescribesCurrentSession(dir, start),
+                      "Judge and DescribesCurrentSession agree");
+
             Directory.Delete(dir, true);
         }
 
@@ -685,6 +765,246 @@ internal static class TestManifest
             Directory.Delete(dir, true);
         }
 
+        // ---- @claims, and the conflict it predicts ----
+        //
+        // The property under test is the one the UI states: the script the
+        // manifest loads first keeps the path. Reversed, the window would tell
+        // the user to change the script that was working.
+        {
+            Console.WriteLine();
+            Console.WriteLine("== @claims parsing ==");
+
+            string dir = Path.Combine(Path.GetTempPath(), "crane-claims-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string script = Path.Combine(dir, "claimer.lua");
+
+            File.WriteAllText(script, string.Join("\n", new string[]
+            {
+                "-- @name Claimer",
+                "-- @param body_containers bool default=true label=\"Bodies\"",
+                "-- @claims var.DamageMulAll",
+                "-- @claims interaction.BodyContainer.duration_scale when=body_containers",
+                "-- @claims var.DamageMulAll",
+                "-- @claims",
+                ""
+            }));
+
+            string cname, cdesc;
+            List<ParamDecl> cdeclared;
+            List<ClaimDecl> claims;
+            ScriptHeader.Read(script, out cname, out cdesc, out cdeclared, out claims);
+
+            Check(claims.Count == 2, "two distinct paths, the repeat and the empty line dropped");
+            ClaimDecl damage = ScriptHeader.FindClaim(claims, "var.DamageMulAll");
+            Check(damage != null && damage.When == "", "an ungated claim has an empty gate");
+            ClaimDecl gated = ScriptHeader.FindClaim(claims, "interaction.BodyContainer.duration_scale");
+            Check(gated != null && gated.When == "body_containers", "when= is read");
+            Check(cdeclared.Count == 1, "@param still parses alongside @claims");
+
+            // A script that declares nothing produces an empty list rather than
+            // null; every caller walks it unconditionally.
+            File.WriteAllText(script, "-- @name Silent\n");
+            ScriptHeader.Read(script, out cname, out cdesc, out cdeclared, out claims);
+            Check(claims != null && claims.Count == 0, "a script with no @claims yields an empty list");
+
+            // Past the 60-line limit the header scan used before.
+            string[] padded = new string[80];
+            padded[0] = "-- @name Deep";
+            for (int i = 1; i < 79; i++) padded[i] = "-- filler";
+            padded[79] = "-- @claims var.Deep";
+            File.WriteAllText(script, string.Join("\n", padded));
+            ScriptHeader.Read(script, out cname, out cdesc, out cdeclared, out claims);
+            Check(ScriptHeader.FindClaim(claims, "var.Deep") != null,
+                  "a declaration below line 60 is still read");
+
+            Console.WriteLine();
+            Console.WriteLine("== claim conflicts ==");
+
+            ScriptEntry quick = NewEntry("quick_hands.lua", true);
+            quick.Name = "Quick Hands";
+            quick.Claims.Add(NewClaim("interaction.BodyContainer.duration_scale", ""));
+            quick.Claims.Add(NewClaim("interaction.Container.duration_scale", ""));
+
+            ScriptEntry steady = NewEntry("steady_hands.lua", true);
+            steady.Name = "Steady Hands";
+            steady.Claims.Add(NewClaim("interaction.BodyContainer.duration_scale", ""));
+            steady.Claims.Add(NewClaim("interaction.Container.duration_scale", ""));
+
+            List<ScriptEntry> both = new List<ScriptEntry>();
+            both.Add(quick);
+            both.Add(steady);
+            ClaimMap.Compute(both);
+
+            Check(!quick.Conflict.Refused, "the script that loads first is not refused");
+            Check(quick.Conflict.Won.Count == 2, "and is told what it is taking");
+            Check(steady.Conflict.Refused, "the script that loads second is refused");
+            Check(steady.Conflict.Silenced, "and with every path gone, is silenced");
+            Check(steady.Conflict.Rival == "Quick Hands", "the rival is named");
+            Check(steady.Conflict.RivalFile == "quick_hands.lua", "and identified by file");
+
+            // Reordering swaps the verdict, which is what the "Run this one
+            // instead" button does to the manifest.
+            both.Reverse();
+            ClaimMap.Compute(both);
+            Check(quick.Conflict.Refused && !steady.Conflict.Refused,
+                  "reordering the manifest swaps who wins");
+
+            // A disabled script claims nothing, so unticking one side clears the
+            // other's warning.
+            quick.Enabled = false;
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused && !quick.Conflict.Refused,
+                  "disabling one side clears the conflict entirely");
+            quick.Enabled = true;
+
+            // A missing file never runs, so it takes no path from anything.
+            both.Reverse();
+            quick.Missing = true;
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused, "a script missing from \\scripts holds nothing");
+            quick.Missing = false;
+
+            // Partial overlap counts paths lost, not scripts.
+            steady.Claims.Add(NewClaim("var.SomethingElse", ""));
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Wanted == 3, "every active claim is counted as wanted");
+            Check(steady.Conflict.Lost.Count == 2, "only the overlapping ones are lost");
+            Check(!steady.Conflict.Silenced, "a partly refused script is not silenced");
+
+            // A claim gated off is not a claim.
+            steady.Claims.Clear();
+            steady.Claims.Add(NewClaim("interaction.Container.duration_scale", "containers"));
+            steady.Params["containers"] = false;
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused, "a claim gated off by a bool is not made");
+            Check(steady.Conflict.Wanted == 0, "and is not counted as wanted");
+
+            steady.Params["containers"] = true;
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Refused, "and is made again when the gate is on");
+
+            steady.Params["containers"] = 0.0;
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused, "a numeric gate at zero is off");
+            steady.Params["containers"] = 2.5;
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Refused, "and a non-zero number is on");
+
+            // With no stored value the gate reads the declared default, so a
+            // freshly installed script is still checked.
+            steady.Params.Remove("containers");
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Refused, "an unstored gate with no declaration counts as on");
+
+            ParamDecl containersOff = new ParamDecl();
+            containersOff.Key = "containers";
+            containersOff.Type = ParamType.Bool;
+            containersOff.Default = false;
+            steady.Declared.Add(containersOff);
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused, "an unstored gate defaulting to false counts as off");
+
+            // off= names the neutral value, which for a multiplier is 1.
+            steady.Declared.Clear();
+            steady.Claims.Clear();
+            steady.Claims.Add(NewGatedClaim("interaction.Container.duration_scale",
+                                            "strength", "1"));
+            steady.Params.Remove("containers");
+            steady.Params["strength"] = 1.0;
+            ClaimMap.Compute(both);
+            Check(!steady.Conflict.Refused, "a claim at its declared off= value is not made");
+            steady.Params["strength"] = 2.0;
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Refused, "and is made at any other value");
+            steady.Params["strength"] = 0.0;
+            ClaimMap.Compute(both);
+            Check(steady.Conflict.Refused, "off= replaces the zero rule rather than adding to it");
+
+            {
+                string offScript = Path.Combine(dir, "off.lua");
+                File.WriteAllText(offScript, "-- @claims var.X when=k off=1.5\n");
+                List<ClaimDecl> offClaims;
+                ScriptHeader.Read(offScript, out cname, out cdesc, out cdeclared, out offClaims);
+                ClaimDecl only = ScriptHeader.FindClaim(offClaims, "var.X");
+                Check(only != null && only.When == "k" && only.Off == "1.5",
+                      "when= and off= parse together");
+            }
+
+            // fallback= and needs=: a refusal the script already handles. Well
+            // Fed loses var.DamageMulAll to Fight or Flight and still works, by
+            // routing through Damage Budget.
+            {
+                string fallbackScript = Path.Combine(dir, "fallback.lua");
+                File.WriteAllText(fallbackScript,
+                    "-- @claims var.DamageMulAll fallback=\"contributes through Damage Budget\" " +
+                    "needs=damage_budget.lua\n" +
+                    "-- @claims var.Other fallback=routes around it unquoted and entire\n");
+                List<ClaimDecl> parsed;
+                ScriptHeader.Read(fallbackScript, out cname, out cdesc, out cdeclared, out parsed);
+                ClaimDecl withNeeds = ScriptHeader.FindClaim(parsed, "var.DamageMulAll");
+                Check(withNeeds != null && withNeeds.Fallback == "contributes through Damage Budget",
+                      "a quoted fallback stops at the quote");
+                Check(withNeeds != null && withNeeds.Needs == "damage_budget.lua",
+                      "and the option after it still parses");
+                ClaimDecl unquoted = ScriptHeader.FindClaim(parsed, "var.Other");
+                Check(unquoted != null && unquoted.Fallback == "routes around it unquoted and entire",
+                      "an unquoted fallback keeps every word");
+
+                ScriptEntry holder = NewEntry("holder.lua", true);
+                holder.Name = "Fight or Flight";
+                holder.Claims.Add(NewClaim("var.DamageMulAll", ""));
+
+                ScriptEntry fed = NewEntry("well_fed.lua", true);
+                fed.Name = "Well Fed";
+                ClaimDecl covered = NewClaim("var.DamageMulAll", "");
+                covered.Fallback = "contributes through Damage Budget instead";
+                covered.Needs = "damage_budget.lua";
+                fed.Claims.Add(covered);
+
+                ScriptEntry budget = NewEntry("damage_budget.lua", true);
+                budget.Name = "Damage Budget";
+
+                List<ScriptEntry> three = new List<ScriptEntry>();
+                three.Add(holder);
+                three.Add(fed);
+                three.Add(budget);
+                ClaimMap.Compute(three);
+                Check(fed.Conflict.Refused, "the refusal is still reported");
+                Check(fed.Conflict.Covered, "but it is covered");
+                Check(!fed.Conflict.Silenced, "so the script is not called silent");
+                Check(!new ScriptRow(fed, null, false).HasConflict,
+                      "and no amber dot is raised over a refusal its author handles");
+                Check(new ScriptRow(fed, null, false).Secondary.Contains("Damage Budget"),
+                      "the second line still says what it does instead");
+
+                // With the arbiter disabled there is no alternative route.
+                budget.Enabled = false;
+                ClaimMap.Compute(three);
+                Check(fed.Conflict.Silenced,
+                      "a fallback whose needs= script is disabled does not count");
+                Check(new ScriptRow(fed, null, false).HasConflict,
+                      "and the warning comes back");
+
+                three.Remove(budget);
+                ClaimMap.Compute(three);
+                Check(fed.Conflict.Silenced, "nor does one naming a script that is not there");
+            }
+
+            // And the row reports it in the words the user reads.
+            steady.Declared.Clear();
+            steady.Claims.Clear();
+            steady.Claims.Add(NewClaim("interaction.Container.duration_scale", ""));
+            ClaimMap.Compute(both);
+            ScriptRow steadyRow = new ScriptRow(steady, null, false);
+            Check(steadyRow.HasConflict, "the losing row carries the conflict marker");
+            Check(steadyRow.Secondary.Contains("Quick Hands"),
+                  "and its second line names the script beating it");
+            Check(!new ScriptRow(quick, null, false).HasConflict,
+                  "the winning row does not, so one problem shows one warning");
+
+            Directory.Delete(dir, true);
+        }
+
         // ---- the phantom-row invariant ----
         //
         // A row must always have a visible label, whatever state its entry is
@@ -730,6 +1050,21 @@ internal static class TestManifest
         Console.WriteLine();
         Console.WriteLine(_checks + " checks, " + _failures + " failure(s)");
         return _failures == 0 ? 0 : 1;
+    }
+
+    private static ClaimDecl NewClaim(string path, string when)
+    {
+        ClaimDecl claim = new ClaimDecl();
+        claim.Path = path;
+        claim.When = when;
+        return claim;
+    }
+
+    private static ClaimDecl NewGatedClaim(string path, string when, string off)
+    {
+        ClaimDecl claim = NewClaim(path, when);
+        claim.Off = off;
+        return claim;
     }
 
     private static ScriptEntry NewEntry(string file, bool enabled)
