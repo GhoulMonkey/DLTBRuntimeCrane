@@ -25,6 +25,6 @@ using System.Runtime.InteropServices;
 // Numeric fields cannot carry a pre-release suffix; the informational version can.
 [assembly: AssemblyVersion("2.2.0.0")]
 [assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyInformationalVersion("2.2.0-dev.8")]
+[assembly: AssemblyInformationalVersion("2.2.0")]
 
 [assembly: ComVisible(false)]

@@ -40,7 +40,7 @@
 #include "DLTBRuntimeBridgeClientKit.h"
 #include "ManifestParse.h"
 
-#define CRANE_VERSION "2.2.0-dev.8"
+#define CRANE_VERSION "2.2.0"
 #define CRANE_CLIENT_VERSION 20000
 #define CRANE_MEMORY_LIMIT (2u * 1024u * 1024u)
 #define CRANE_INSTRUCTION_BUDGET 100000
