@@ -87,9 +87,10 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           case "$GITHUB_REF" in refs/tags/*) ;; *) version="$(git rev-parse --short HEAD)" ;; esac
           mkdir -p dist
-          python tools/make_package.py "dist/DLTBRuntimeCrane-$version.zip" \
+          python tools/make_package.py "dist/DLTBRuntimeCrane-$version.zip" "$version" \
             asi/DLTBRuntimeCrane.asi \
             manager/bin/Release/CraneLoader.exe \
+            LICENSE \
             asi/vendor/LICENSE.txt \
             layout/ph_ft/work/bin/x64/scripts/quick_hands.lua \
             sdk
