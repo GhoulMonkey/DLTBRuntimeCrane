@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 2.3.0
+
+- Sorts the script list alphabetically, so a script is where its name says it
+  is.
+- Warns when two enabled scripts want the same setting, before the game is
+  started. A lease is exclusive, so the script CRANE loads first keeps the
+  setting and the other is refused, which otherwise produces a script that is
+  ticked, loads without error, and does nothing. The refused row is marked
+  amber and names the script that beat it; selecting it explains the clash and
+  offers Run this one instead, which moves it ahead in the load order.
+- Adds the `@claims` script header tag, with `when=`, `off=`, `fallback=` and
+  `needs=`. It declares which settings a script leases, so the warning above
+  can be worked out without running the script. CRANE itself does not read it,
+  and a script must still handle a refused claim at runtime.
+- Renames Move up and Move down to Load earlier and Load later. The list is
+  alphabetical now and no longer shows load order, so the detail pane states
+  where the selected script sits in it.
+- Fixes the connection readout, which changed to GAME STARTING roughly six
+  minutes into every session. It judged CRANE's status report by age, and
+  CRANE writes that report when it loads scripts and not again, so a healthy
+  session's report aged out of the window while the game was still running.
+  The report is now compared against the game process's start time.
+- Adds a tooltip to the connection indicator that explains the verdict: which
+  run of the game is up, when CRANE last reported, and how the two compare.
+- Fixes the two ends of the status bar disagreeing about how many scripts are
+  installed. Both now count the rows shown.
+- Documents `@claims` in the SDK. `validate.ps1` checks its options, rejects a
+  `when=` naming an undeclared parameter, and warns when a script leases
+  without declaring. Script metadata is read from the first 120 lines rather
+  than 60.
+
 ## 2.2.0
 
 - Relicenses the scripting host and the manager under the GNU General Public
