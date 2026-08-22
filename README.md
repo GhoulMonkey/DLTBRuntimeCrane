@@ -17,8 +17,7 @@ shipped default is read-only.
 
 `CraneLoader.exe` ships alongside the ASI. Scripts are added, enabled, ordered
 and configured there. It reads each script's metadata header and builds the
-settings from it, so a script does not need a UI or a configuration parser of
-its own.
+settings from it.
 
 ![The CraneLoader window. Installed scripts are listed on the left under Bridge
 clients and Crane scripts. The settings for the selected script fill the panel
@@ -26,9 +25,7 @@ on the right.](docs/images/craneloader.png)
 
 Native Bridge clients appear in the same list, so one window covers the Lua
 scripts CRANE runs and the compiled mods loaded through the Bridge. Those mods
-keep their own `.ini` files and the manager edits them in place. The capsule at
-the top right reports whether the game is running, and edits to scripts and
-settings are picked up without restarting it.
+keep their own `.ini` files and the manager edits them in place.
 
 Settings holds CRANE's own keys and the Bridge's, read from and written back to
 the same `.ini` files both already use.
