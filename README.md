@@ -39,6 +39,29 @@ below.](docs/images/craneloader-settings.png)
 only read. Switching it off while the game is running releases every lease and
 modifier the scripts hold, and the Bridge restores the values it recorded.
 
+### Launching CraneLoader from Vortex
+
+`CraneLoader.exe` can be run directly from `ph_ft\` at any time. If you use
+Vortex, it can also be registered as a tool and launched from the sidebar.
+
+1. Select **Dying Light: The Beast** in Vortex, then open **Tools** from the
+   wrench icon in the left sidebar.
+2. Click **+** to add a tool.
+3. Set **Name** to `CraneLoader`. For **Target**, browse to `CraneLoader.exe`
+   inside the game's `ph_ft` folder, at
+   `...\Dying Light The Beast\ph_ft\CraneLoader.exe`.
+   **Start In** should fill itself with the `ph_ft` folder. Leave **Command
+   line** blank and the rest at their defaults.
+4. Click **Save**.
+5. Click the pin icon beside CraneLoader to add it to the Dying Light: The Beast
+   shortcuts in the sidebar. Pinned or not, it can be launched from the Tools
+   page.
+
+If you updated from 2.1.1 or earlier you may find `CraneManager.exe` sitting in
+`ph_ft\` beside `CraneLoader.exe`. That is the old name of the same program,
+renamed in 2.2.0 and left behind by the update. Point Vortex at
+`CraneLoader.exe`; the older file can be deleted.
+
 ## Downloads
 
 GitHub is where CRANE is distributed. Download the latest release from
