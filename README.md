@@ -117,8 +117,9 @@ cd manager
 ./build.sh
 ```
 
-The output is at `manager/bin/Release/CraneLoader.exe`. The build runs 183 unit
-tests and a startup selftest that constructs the main window without showing it.
+The output is at `manager/bin/Release/CraneLoader.exe`. The build runs 287 unit
+checks, a theme reference check, and a startup selftest that constructs the main
+window without showing it.
 
 Both builds also run on every push here, in
 [.github/workflows/build.yml](.github/workflows/build.yml).
