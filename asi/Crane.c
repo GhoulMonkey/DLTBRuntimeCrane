@@ -40,7 +40,7 @@
 #include "DLTBRuntimeBridgeClientKit.h"
 #include "ManifestParse.h"
 
-#define CRANE_VERSION "2.3.0"
+#define CRANE_VERSION "2.4.0"
 #define CRANE_CLIENT_VERSION 20000
 #define CRANE_MEMORY_LIMIT (2u * 1024u * 1024u)
 #define CRANE_INSTRUCTION_BUDGET 100000
@@ -53,6 +53,20 @@
 #define CRANE_MAX_MODIFIERS 64
 #define CRANE_MAX_NAME 128
 #define CRANE_MAX_MANIFEST (256u * 1024u)
+/*
+ * How long a scheduled update may stay queued before this host assumes it was
+ * dropped and asks again. Generous against a loading screen, where the update
+ * phase can legitimately go quiet for a while; a spurious re-arm only costs one
+ * extra callback, and never re-arming costs the session.
+ */
+#define CRANE_TASK_STALL_MS 2000
+/*
+ * How many announcements from one script's load are remembered for the repeat
+ * check. A script states a set, not a line -- Well Fed says three -- and the
+ * whole set has to be held or none of it deduplicates. Past this, the extra
+ * lines simply repeat: noisier, never wrong.
+ */
+#define CRANE_VOICE_LINES 8
 /*
  * Enumeration ceiling, in whole dltb_path_info records.
  *
@@ -128,7 +142,8 @@ typedef enum crane_script_state {
     CRANE_STATE_DISABLED = 0,   /* listed, but switched off */
     CRANE_STATE_LOADED = 1,     /* ran to completion */
     CRANE_STATE_MISSING = 2,    /* listed but not in scripts\ */
-    CRANE_STATE_FAILED = 3      /* syntax error, runtime error, budget stop */
+    CRANE_STATE_FAILED = 3,     /* syntax error, runtime error, budget stop */
+    CRANE_STATE_WAITING = 4     /* enabled, held back until the session is playable */
 } crane_script_state;
 
 typedef struct lua_host_script {
@@ -163,6 +178,8 @@ static lua_host_modifier g_modifiers[CRANE_MAX_MODIFIERS];
 static lua_host_script g_scripts[CRANE_MAX_SCRIPTS];
 static unsigned g_script_count;
 static int g_current_owner = CRANE_OWNER_CONSOLE;
+/* Set only while a script's body is running under load_one_script. */
+static int g_loading_script;
 static int g_allow_writes;
 static int g_writes_state_announced;   /* so an unchanged state is not re-announced */
 static wchar_t g_module_dir[MAX_PATH];
@@ -176,6 +193,22 @@ static FILETIME g_ini_write;
 static int g_ini_present;
 static volatile LONG g_task_pending;
 static volatile LONG g_reload_requested;
+/*
+ * Whether the last update phase found a playable session: -1 until the first
+ * one has been asked, then 0 or 1. Only the update phase writes it.
+ */
+static int g_session_playable = -1;
+static int g_deferred_announced;      /* so "waiting for a session" is said once */
+static int g_schedule_warned;         /* so a busy update path warns once, not per tick */
+/* GetTickCount64 when the pending task was scheduled. Read by the watcher to
+   spot a task that was queued and then never ran. */
+static volatile LONG64 g_task_queued_ms;
+/* The watcher thread's own view of playability, so it can spot the edge without
+   scheduling anything. Only that thread touches it. */
+static int g_watched_playable = -1;
+/* A stall streak is announced once; both are cleared by a successful update. */
+static volatile LONG g_stall_announced;
+static volatile LONG g_update_ever_ran;
 static volatile LONG g_settings_dirty;
 static char g_command[CRANE_MAX_COMMAND];
 static volatile LONG g_command_ready;
@@ -500,8 +533,159 @@ static int lua_bridge_scope(lua_State *L) {
     return 1;
 }
 
+/*
+ * What each script announced on its last load, kept across reloads.
+ *
+ * Keyed by filename rather than by manifest index: read_manifest rebuilds the
+ * script array from nothing on every reload, and the order changes under the
+ * user's hands, since the list is reorderable. The filename is the one
+ * identifier that survives both.
+ *
+ * It covers what CRANE says about a script as well as what the script says
+ * about itself. Both are announcements a reload manufactures, and deduplicating
+ * only one of them was visibly incoherent in the 2026-08-21 log: `Steady Hands:
+ * inactive; could not claim ...` appeared once, while the host's own
+ * `steady_hands.lua refused ...` about the same event appeared eleven times.
+ */
+typedef struct lua_host_voice {
+    char file[CRANE_MAX_NAME];
+    /* What this script said during its previous load, and what it is saying
+       during this one. A line already in `said` is a repeat; everything is
+       recorded into `saying` either way, so a suppressed line stays part of the
+       set and does not come back as news on the load after. */
+    uint64_t said[CRANE_VOICE_LINES];
+    uint64_t saying[CRANE_VOICE_LINES];
+    unsigned said_count;
+    unsigned saying_count;
+} lua_host_voice;
+
+static lua_host_voice g_voices[CRANE_MAX_SCRIPTS];
+
+/*
+ * Lines are held as 64-bit FNV-1a rather than text.
+ *
+ * A script announces a SET of things at load -- Well Fed says three -- and
+ * comparing against only the previous line deduplicates none of them, because
+ * consecutive lines differ from each other. Holding the set as text costs
+ * CRANE_MAX_SCRIPTS * 2 * CRANE_VOICE_LINES buffers, which is a quarter of a
+ * megabyte of static for log tidiness; as hashes it is eight kilobytes.
+ *
+ * The length is folded in, so a truncation or a prefix cannot alias. A genuine
+ * 64-bit collision across the few lines one script emits would drop one log
+ * line.
+ */
+static uint64_t voice_hash(const char *text) {
+    uint64_t hash = 1469598103934665603ULL;
+    size_t length = 0;
+    for (; text[length]; ++length) {
+        hash ^= (unsigned char)text[length];
+        hash *= 1099511628211ULL;
+    }
+    hash ^= (uint64_t)length;
+    hash *= 1099511628211ULL;
+    return hash;
+}
+
+static lua_host_voice *voice_for(int owner) {
+    unsigned i;
+    const char *file;
+    if (owner < 0 || (unsigned)owner >= g_script_count) return NULL;
+    file = g_scripts[owner].file;
+    if (!file[0]) return NULL;
+    for (i = 0; i < CRANE_MAX_SCRIPTS; ++i)
+        if (strcmp(g_voices[i].file, file) == 0) return &g_voices[i];
+    for (i = 0; i < CRANE_MAX_SCRIPTS; ++i)
+        if (!g_voices[i].file[0]) {
+            strncpy_s(g_voices[i].file, sizeof(g_voices[i].file), file, _TRUNCATE);
+            return &g_voices[i];
+        }
+    /* Full. Every line goes through, as it did before this record existed:
+       noisier, never wrong. */
+    return NULL;
+}
+
+/*
+ * Starts a script's load: this load's lines become the set to compare the next
+ * one against.
+ *
+ * The comparison is against the previous load rather than against lines already
+ * emitted during this one, so a script that says the same thing twice in one
+ * body still says it twice.
+ */
+static void voice_begin_load(int owner) {
+    lua_host_voice *voice = voice_for(owner);
+    if (!voice) return;
+    memcpy(voice->said, voice->saying, sizeof(voice->said));
+    voice->said_count = voice->saying_count;
+    voice->saying_count = 0;
+}
+
+static int voice_is_new(int owner, const char *text) {
+    lua_host_voice *voice = voice_for(owner);
+    uint64_t hash;
+    unsigned i;
+    int repeat = 0;
+    if (!voice) return 1;
+    hash = voice_hash(text);
+    for (i = 0; i < voice->said_count; ++i)
+        if (voice->said[i] == hash) { repeat = 1; break; }
+    /* Recorded whether or not it is emitted: the set describes what the script
+       says at load, not what reached the log. */
+    if (voice->saying_count < CRANE_VOICE_LINES)
+        voice->saying[voice->saying_count++] = hash;
+    return !repeat;
+}
+
+static void voice_forget(const char *file) {
+    unsigned i;
+    if (!file || !file[0]) return;
+    for (i = 0; i < CRANE_MAX_SCRIPTS; ++i)
+        if (strcmp(g_voices[i].file, file) == 0) {
+            memset(&g_voices[i], 0, sizeof(g_voices[i]));
+            return;
+        }
+}
+
+/* A session boundary resets what counts as news: the scripts running in a
+   fresh session are worth stating once, even when they are the same scripts
+   saying the same things as the last one. */
+static void voice_forget_all(void) {
+    memset(g_voices, 0, sizeof(g_voices));
+}
+
+/*
+ * bridge.log(text), with a script's own last line remembered so a reload does
+ * not make it say the same thing again.
+ *
+ * A reload re-runs every script, because manifest order decides who wins a
+ * contested lease and rebuilding the whole set is what keeps "what is loaded" a
+ * function of the manifest alone. The cost is that ticking one script in the
+ * manager made all nine re-announce themselves, and a nine-line block that
+ * repeats on every toggle buries the one or two lines that actually changed.
+ *
+ * A script cannot solve this for itself. §7 of the authoring notes tells it to
+ * keep the last value and log on change, and that works within one run -- but a
+ * reload constructs it afresh, so its idea of "last" is gone exactly when the
+ * repeat is about to happen. Only the host outlives the reload, so only the
+ * host can tell a repeat from news.
+ *
+ * The rule is narrow on two axes.
+ *
+ * Only a line identical to one the same script logged before is dropped, so
+ * a refusal appearing, a value changing, or a script falling back to a different
+ * lever all still announce themselves.
+ *
+ * And only while the script's body is loading. Lines from event callbacks
+ * and update work always go through, however repetitive, because "this happened
+ * again" is real information and a diagnostic channel that drops a repeat
+ * silently is worse than a noisy one: reading these logs is how a callback that
+ * stopped arriving was found, and dropped records would have left that
+ * unanswerable. Load-time announcements are the only lines a reload
+ * manufactures, so they are the only ones suppressed.
+ */
 static int lua_bridge_log(lua_State *L) {
     const char *text = luaL_checkstring(L, 1);
+    if (g_loading_script && !voice_is_new(g_current_owner, text)) return 0;
     host_log(DLTB_LOG_CLASS_INFO, "lua: %s", text);
     return 0;
 }
@@ -670,10 +854,19 @@ static int lua_bridge_claim(lua_State *L) {
         if (!g_leases[slot].active) continue;
         if (g_leases[slot].owner == g_current_owner) continue;
         if (strcmp(g_leases[slot].path, path) != 0) continue;
-        host_log(DLTB_LOG_CLASS_INFO,
-                 "%s refused %s: already held by %s, which is higher in the list",
-                 owner_name(g_current_owner), path,
-                 owner_name(g_leases[slot].owner));
+        {
+            /* Through the same repeat check as the script's own lines: this is
+               CRANE narrating a script's load, and a reload manufactures it just
+               as surely. Built into a buffer rather than logged directly so the
+               finished text is what gets compared. */
+            char refusal[320];
+            _snprintf_s(refusal, sizeof(refusal), _TRUNCATE,
+                        "%s refused %s: already held by %s, which is higher in the list",
+                        owner_name(g_current_owner), path,
+                        owner_name(g_leases[slot].owner));
+            if (!g_loading_script || voice_is_new(g_current_owner, refusal))
+                host_log(DLTB_LOG_CLASS_INFO, "%s", refusal);
+        }
         lua_pushnil(L); lua_pushliteral(L, "CRANE_PATH_OWNED"); return 2;
     }
 
@@ -965,15 +1158,29 @@ static void push_params(unsigned index) {
     lua_setglobal(g_lua, "params");
 }
 
+/*
+ * Records the file's timestamp, so sources_changed() does not read a script
+ * whose write time is still zero as a script that has just been edited.
+ *
+ * Called on the deferred path as well as the loading one: a script held back
+ * until the session is playable is not an unstamped script, and treating it as
+ * one turned the 250 ms watcher into a reload-every-tick loop.
+ */
+static int stamp_write_time(unsigned index) {
+    wchar_t wide_path[MAX_PATH];
+    WIN32_FILE_ATTRIBUTE_DATA attributes;
+    script_full_path(g_scripts[index].file, wide_path, MAX_PATH);
+    if (!GetFileAttributesExW(wide_path, GetFileExInfoStandard, &attributes)) return 0;
+    g_scripts[index].write_time = attributes.ftLastWriteTime;
+    return 1;
+}
+
 static void load_one_script(unsigned index) {
     wchar_t wide_path[MAX_PATH];
     char path[MAX_PATH];
-    WIN32_FILE_ATTRIBUTE_DATA attributes;
 
     script_full_path(g_scripts[index].file, wide_path, MAX_PATH);
-    if (GetFileAttributesExW(wide_path, GetFileExInfoStandard, &attributes))
-        g_scripts[index].write_time = attributes.ftLastWriteTime;
-    else {
+    if (!stamp_write_time(index)) {
         host_log(DLTB_LOG_CLASS_ERROR, "%s is listed in the manifest but not present in scripts\\",
                  g_scripts[index].file);
         g_scripts[index].state = CRANE_STATE_MISSING;
@@ -999,6 +1206,10 @@ static void load_one_script(unsigned index) {
     }
     g_current_owner = (int)index;
     push_params(index);
+    /* Only the body's own announcements are checked for a repeat -- see
+       lua_bridge_log. Cleared before anything this script scheduled can run. */
+    voice_begin_load((int)index);
+    g_loading_script = 1;
     if (protected_call_detail(0, 0, g_scripts[index].file,
                               g_scripts[index].error, sizeof(g_scripts[index].error))) {
         g_scripts[index].state = CRANE_STATE_LOADED;
@@ -1015,6 +1226,7 @@ static void load_one_script(unsigned index) {
     } else {
         g_scripts[index].state = CRANE_STATE_FAILED;
     }
+    g_loading_script = 0;
     g_current_owner = CRANE_OWNER_CONSOLE;
 }
 
@@ -1058,6 +1270,7 @@ static const char *state_name(crane_script_state state) {
     case CRANE_STATE_LOADED:  return "loaded";
     case CRANE_STATE_MISSING: return "missing";
     case CRANE_STATE_FAILED:  return "failed";
+    case CRANE_STATE_WAITING: return "waiting";
     case CRANE_STATE_DISABLED:
     default:                  return "disabled";
     }
@@ -1129,6 +1342,67 @@ static void write_status(void) {
  * Rebuilding the whole set keeps "what is loaded" a function of the manifest
  * alone.
  */
+/*
+ * Whether the game currently has a session a script can act on.
+ *
+ * Asked once per update phase rather than assumed, because the answer is the
+ * difference between a script that works and a script that reports
+ * DLTB_REFUSED_UNSAFE and gives up: every var.* claim resolves through the
+ * player subject, and at the menu or inside a loading screen there is none.
+ */
+/*
+ * Callable from the watcher thread as well as the update phase.
+ *
+ * `session.playable` is declared API3_SCOPE_META, which is DLTB_SCOPE_ANY plus
+ * DLTB_SCOPE_ENGINE, and the Bridge's own note on that row says why: it is
+ * Bridge-owned state observed inside the update phase and published for
+ * lock-free reads, so a client on its own thread gets a whole value rather than
+ * a torn one. Checked against the path table rather than assumed -- reading it
+ * off-thread is the difference between noticing a session and waiting forever
+ * for a callback that may have been cancelled.
+ */
+static int session_playable(void) {
+    dltb_value value;
+    if (!g_api || !g_client.id) return 0;
+    memset(&value, 0, sizeof(value)); value.struct_bytes = sizeof(value);
+    if (g_api->state->read(g_client, "session.playable", DLTB_SUBJECT_NONE, &value) != DLTB_OK)
+        return 0;
+    return value.type == DLTB_T_BOOL && value.num.boolean;
+}
+
+/*
+ * The manifest, read and reported, with nothing run.
+ *
+ * Used when a reload is asked for while there is no playable session. The
+ * manifest still has to be read -- the manager's status file is how it learns
+ * what the host sees, and a host that says nothing while the player sits at the
+ * menu is indistinguishable from a host that crashed.
+ */
+static unsigned enabled_script_count(void) {
+    unsigned i, count = 0;
+    for (i = 0; i < g_script_count; ++i) if (g_scripts[i].enabled) count++;
+    return count;
+}
+
+static void defer_scripts(void) {
+    unsigned i;
+    release_all_scripts();
+    /* Nothing runs from here until a session exists, and when one does every
+       script should say what it is doing in that session -- so the record of
+       what they said in the last one is dropped at the boundary. */
+    voice_forget_all();
+    read_manifest();
+    for (i = 0; i < g_script_count; ++i) {
+        g_scripts[i].error[0] = '\0';
+        if (!g_scripts[i].enabled) { g_scripts[i].state = CRANE_STATE_DISABLED; continue; }
+        g_scripts[i].state = stamp_write_time(i) ? CRANE_STATE_WAITING : CRANE_STATE_MISSING;
+        if (g_scripts[i].state == CRANE_STATE_MISSING)
+            strncpy_s(g_scripts[i].error, sizeof(g_scripts[i].error),
+                      "not found in scripts\\", _TRUNCATE);
+    }
+    write_status();
+}
+
 static void reload_scripts(void) {
     unsigned i;
     release_all_scripts();
@@ -1140,6 +1414,9 @@ static void reload_scripts(void) {
             host_log(DLTB_LOG_CLASS_DEBUG, "skipping %s (disabled)", g_scripts[i].file);
             g_scripts[i].state = CRANE_STATE_DISABLED;
             g_scripts[i].error[0] = '\0';
+            /* Switching it off ends what it had to say, so switching it back on
+               is news again rather than a repeat of the last thing it said. */
+            voice_forget(g_scripts[i].file);
             continue;
         }
         load_one_script(i);
@@ -1173,10 +1450,32 @@ static void run_console_command(void) {
  * other way to retry.
  *
  * Either way this is reload_scripts(), which already releases and reclaims.
+ *
+ * Scripts run only while the session is playable, and the transition either way
+ * is a reload.
+ *
+ * Crane used to load the manifest the moment it registered, which is at the
+ * main menu. Every script that claims a var.* lease -- which is most of them,
+ * and every one the SDK templates teach -- was refused with
+ * DLTB_REFUSED_UNSAFE, reported itself inactive, and returned. Nothing then
+ * reloaded when the save finished loading, so those scripts stayed dead for the
+ * rest of the session; unticking and reticking them in the manager was the only
+ * way to get them running, and it worked because it rewrote the manifest and
+ * forced a reload at a moment when the world existed.
+ *
+ * So the load waits for a playable session, and leaving one releases: the
+ * player object a lease's baseline belongs to does not survive a load screen,
+ * and holding a lease across that boundary is exactly the stale-subject case
+ * the native clients already gate against.
  */
 static void on_update(dltb_scope scope, void *context) {
+    int playable;
     (void)scope; (void)context;
     InterlockedExchange(&g_task_pending, 0);
+    /* This callback running is the proof the update path works, and the end of
+       any stall streak the watcher was reporting. */
+    InterlockedExchange(&g_update_ever_ran, 1);
+    InterlockedExchange(&g_stall_announced, 0);
     EnterCriticalSection(&g_lock);
     if (InterlockedCompareExchange(&g_settings_dirty, 0, 1) == 1) {
         if (read_settings()) {
@@ -1187,7 +1486,34 @@ static void on_update(dltb_scope scope, void *context) {
             InterlockedExchange(&g_reload_requested, 1);
         }
     }
-    if (InterlockedCompareExchange(&g_reload_requested, 0, 1) == 1) reload_scripts();
+    playable = session_playable();
+    if (playable != g_session_playable) {
+        /* Both edges reload. Becoming playable is the retry the old code never
+           had; leaving is the release, and re-running the chunks against the
+           next session is what reload_scripts() does anyway. */
+        if (g_session_playable != -1 || playable)
+            host_log(DLTB_LOG_CLASS_INFO,
+                     playable ? "session is playable; loading scripts"
+                              : "session ended; releasing what scripts held");
+        g_session_playable = playable;
+        g_deferred_announced = 0;
+        InterlockedExchange(&g_reload_requested, 1);
+    }
+    if (InterlockedCompareExchange(&g_reload_requested, 0, 1) == 1) {
+        if (playable) reload_scripts();
+        else {
+            unsigned waiting;
+            defer_scripts();
+            waiting = enabled_script_count();
+            /* Silent when there is nothing to hold back: an empty script list
+               at the menu is the ordinary state of a fresh install, not news. */
+            if (!g_deferred_announced && waiting) {
+                g_deferred_announced = 1;
+                host_log(DLTB_LOG_CLASS_INFO,
+                         "no playable session; %u script(s) wait for one", waiting);
+            }
+        }
+    }
     run_console_command();
     LeaveCriticalSection(&g_lock);
 }
@@ -1198,13 +1524,72 @@ static void queue_update(void) {
         dltb_status status = g_api->scope->schedule(g_client, on_update, NULL, &task);
         if (status != DLTB_OK) {
             InterlockedExchange(&g_task_pending, 0);
-            host_log(DLTB_LOG_CLASS_WARN,
-                     "Lua work is waiting for the game update path");
+            if (!g_schedule_warned) {
+                g_schedule_warned = 1;
+                host_log(DLTB_LOG_CLASS_WARN,
+                         "Lua work is waiting for the game update path");
+            }
             host_log(DLTB_LOG_CLASS_DEBUG,
                      "Lua work schedule returned %s (%d)",
                      dltb_status_text(status), (int)status);
+        } else {
+            g_schedule_warned = 0;
+            InterlockedExchange64(&g_task_queued_ms, (LONG64)GetTickCount64());
         }
     }
+}
+
+/*
+ * Re-arms a scheduled update that never ran.
+ *
+ * `g_task_pending` exists so one queued callback is not queued again, and it is
+ * cleared by the callback itself. That makes it a latch with exactly one key,
+ * and if the callback never runs, the key is never turned: queue_update()
+ * becomes a permanent no-op and this host stops reloading, stops writing the
+ * status file, and stops responding to the manifest for the rest of the run.
+ *
+ * A queued task not running is ordinary. The Bridge cancels a game-thread task
+ * whose runtime generation no longer matches the current one, which is what a
+ * level transition does, and a level transition is when this host has work to
+ * do. A full task queue is refused without a log record. Either case leaves the
+ * client to notice and ask again, so the latch gets a deadline.
+ *
+ * Said once per streak, and only the first re-arm says anything.
+ *
+ * Logging every re-arm produced a dozen identical lines over the twenty-five
+ * seconds a game takes to start, because the update phase does not run until
+ * the game is far enough along to have one. The streak is one event.
+ *
+ * Which class it goes to depends on whether an update has run before. Before
+ * the first one the game is still starting up, which is expected and goes to
+ * DEBUG. After it, a scheduled callback was accepted and then dropped, which
+ * stops this host working until the re-arm fires, and goes to INFO.
+ */
+static void release_stalled_task(void) {
+    LONG64 queued;
+    if (InterlockedCompareExchange(&g_task_pending, 1, 1) != 1) return;
+    queued = InterlockedCompareExchange64(&g_task_queued_ms, 0, 0);
+    if (!queued) return;
+    if ((LONG64)GetTickCount64() - queued < CRANE_TASK_STALL_MS) return;
+    if (InterlockedCompareExchange(&g_task_pending, 0, 1) != 1) return;
+    if (InterlockedCompareExchange(&g_stall_announced, 1, 0) != 0) return;
+    if (InterlockedCompareExchange(&g_update_ever_ran, 0, 0))
+        host_log(DLTB_LOG_CLASS_INFO,
+                 "a scheduled update did not run within %d ms; asking again "
+                 "until one does",
+                 (int)CRANE_TASK_STALL_MS);
+    else
+        host_log(DLTB_LOG_CLASS_DEBUG,
+                 "the game update path has not started yet; waiting for it");
+}
+
+/* Work that a scheduled update would consume. Polled by the watcher so a task
+   is queued when there is something to do, rather than four times a second --
+   see the note on release_stalled_task for what constant queueing cost. */
+static int update_work_pending(void) {
+    return InterlockedCompareExchange(&g_reload_requested, 0, 0) != 0 ||
+           InterlockedCompareExchange(&g_settings_dirty, 0, 0) != 0 ||
+           InterlockedCompareExchange(&g_command_ready, 0, 0) != 0;
 }
 
 /* True when the manifest or any listed script changed on disk. */
@@ -1330,15 +1715,46 @@ static DWORD WINAPI worker_thread(LPVOID unused) {
              "commands: DLTBRuntimeCrane.manifest.json, scripts\\*.lua or \\\\.\\pipe\\DLTBRuntimeCrane");
     g_pipe_worker = CreateThread(NULL, 0, pipe_thread, NULL, 0, NULL);
     if (g_pipe_worker) CloseHandle(g_pipe_worker);
+    /*
+     * The watcher asks two questions every quarter second: has a source file
+     * changed, and is there a session yet.
+     *
+     * Reading `session.playable` here rather than only inside the scheduled
+     * callback is what keeps this working. An earlier build asked the question
+     * from inside the callback, and queued a callback every tick to get it
+     * asked, so noticing a session depended on a scheduled task running at the
+     * moment the Bridge is most likely to drop one. A dropped task left the
+     * pending latch set, nothing queued another, and this host stopped
+     * responding for the rest of the run.
+     *
+     * The read is safe from this thread; see session_playable. Detection no
+     * longer depends on the queue, a task is queued only when there is work for
+     * it, and release_stalled_task asks again for one that was dropped.
+     */
     while (WaitForSingleObject(g_stop_event, 250) == WAIT_TIMEOUT) {
+        int playable = session_playable();
+        if (playable != g_watched_playable) {
+            g_watched_playable = playable;
+            /* DEBUG, because the update phase logs the transition at INFO once
+               it acts on it. This line matters when the two disagree: the
+               watcher saw a session and the callback never arrived. Raising the
+               log level distinguishes those two cases. */
+            host_log(DLTB_LOG_CLASS_DEBUG,
+                     "watcher sees session.playable=%d; asking for an update",
+                     playable);
+            /* The update phase re-reads it and owns the decision; this only
+               says "something happened, come and look". */
+            InterlockedExchange(&g_reload_requested, 1);
+        }
         if (sources_changed()) {
             /* Settings are re-read in the update phase rather than here:
                log->set_level and any consequent release must happen on the
                Bridge's thread, not the watcher's. */
             InterlockedExchange(&g_settings_dirty, 1);
             InterlockedExchange(&g_reload_requested, 1);
-            queue_update();
         }
+        release_stalled_task();
+        if (update_work_pending()) queue_update();
     }
     EnterCriticalSection(&g_lock);
     release_all_scripts();

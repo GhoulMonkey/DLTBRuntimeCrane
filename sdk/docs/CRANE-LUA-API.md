@@ -36,6 +36,15 @@ Prefer operation results over branching on raw scope numbers.
 Writes one INFO message through CRANE into the shared Bridge log and console. It returns no
 value. Do not log every delivery of a per-update event.
 
+From CRANE 2.4.0, a repeated announcement at load time is dropped: while a script's body is
+running, a line identical to one that script logged on its previous load is not written again.
+Reloading re-runs every listed script, which is how load order stays a function of the manifest,
+so without this, ticking one script in the manager made every other script restate itself.
+
+Only the body is affected. Lines logged from event callbacks or update work always go through,
+however often they repeat, because a repeat there is a real observation. If a load-time line
+should appear every time, put a value or a count in it that changes.
+
 ## Discovery and observation
 
 ### `bridge.resolve(subject_path)`

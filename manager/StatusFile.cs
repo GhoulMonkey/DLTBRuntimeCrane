@@ -22,7 +22,7 @@ using System.IO;
 
 namespace CraneLoader
 {
-    public enum ScriptState { Unknown, Disabled, Loaded, Missing, Failed }
+    public enum ScriptState { Unknown, Disabled, Loaded, Missing, Failed, Waiting }
 
     public class StatusReport
     {
@@ -278,6 +278,9 @@ namespace CraneLoader
                 case "missing": return ScriptState.Missing;
                 case "failed": return ScriptState.Failed;
                 case "disabled": return ScriptState.Disabled;
+                // Enabled, read, and held back until the game reaches a
+                // playable session. Not a failure and not idle: it will run.
+                case "waiting": return ScriptState.Waiting;
                 default: return ScriptState.Unknown;
             }
         }

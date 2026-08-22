@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 2.4.0
+
+- Fixes scripts not running when they were enabled before the game was
+  launched. CRANE read the script list as soon as it connected, which is at the
+  main menu, where there is no player for a script to act on. Every claim was
+  refused, each script reported itself inactive, and nothing ran them again once
+  the save had loaded, so they did nothing for the rest of the session;
+  unticking and reticking a script was the only way to start it. CRANE now waits
+  for a playable session and reloads on every session change, so a script also
+  comes back after a load screen. One that is waiting shows as Waiting for a
+  playable session.
+- Fixes CRANE going silent for the rest of a session when the game dropped one
+  of its scheduled callbacks. It never asked for another, so it stopped
+  reloading scripts and stopped responding to the script list.
+- Shows the load order in the script list again, and lets a row be dragged to
+  change it. 2.3.0 sorted the list by name, which hid the order that decides
+  which of two scripts keeps a setting both want. Dragging carries the script's
+  name and draws a line where the row will land.
+- Keeps enabled scripts above disabled ones. Ticking a script moves it to the
+  bottom of the enabled group, where it claims after everything already running;
+  unticking moves it to the top of the disabled group. Only enabled scripts
+  drag, and only within their own group.
+- Stops the log repeating itself. A reload re-runs every listed script, so
+  ticking one script made all of them restate themselves. A line a script
+  already logged on its previous load is not written again, and neither is
+  CRANE's own line about a refused claim. Lines from event callbacks and update
+  work are never suppressed.
+- Describes a script whose settings are all taken as Incompatible with the
+  script that took them.
+- Removes the Loads 4 of 9 line from the detail pane. The list shows the load
+  order again, so the row's position already says it, and the line could report
+  a position past its own total when a manifest had disabled scripts above the
+  enabled ones.
+
 ## 2.3.0
 
 - Sorts the script list alphabetically, so a script is where its name says it

@@ -34,7 +34,7 @@ mkdir -p build
 echo "== tests =="
 "$csc" -nologo -target:exe -warn:4 -warnaserror+ -reference:System.dll \
     -out:build/CraneLoaderTests.exe \
-    ManifestFile.cs ScriptHeader.cs ClaimMap.cs StatusFile.cs FirstRun.cs ScriptRow.cs GameLaunch.cs IniFile.cs ClientRow.cs TestManifest.cs
+    ManifestFile.cs ScriptHeader.cs ClaimMap.cs StatusFile.cs FirstRun.cs ScriptRow.cs GameLaunch.cs IniFile.cs ClientRow.cs LoadOrder.cs TestManifest.cs
 ./build/CraneLoaderTests.exe | tail -3
 
 echo "== theme references =="

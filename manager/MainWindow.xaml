@@ -163,8 +163,18 @@
           <Border Height="2" Width="26" HorizontalAlignment="Left"
                   Background="{DynamicResource Accent}" Margin="0,5,0,0"/>
         </StackPanel>
+        <!-- Drag to reorder. The list is the load order again, so the direct
+             way to change the load order is to move a row. The detail pane's
+             Load earlier / Load later buttons stay: they are the keyboard
+             route, and dragging is not available to everyone. -->
         <ListBox x:Name="ScriptList"
                  SelectionChanged="OnScriptSelected"
+                 AllowDrop="True"
+                 PreviewMouseLeftButtonDown="OnScriptListMouseDown"
+                 PreviewMouseMove="OnScriptListMouseMove"
+                 DragOver="OnScriptListDragOver"
+                 DragLeave="OnScriptListDragLeave"
+                 Drop="OnScriptListDrop"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
           <ListBox.ItemContainerStyle>
             <!-- BasedOn matters: an ItemContainerStyle without it replaces the

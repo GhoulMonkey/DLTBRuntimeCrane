@@ -116,6 +116,13 @@ namespace CraneLoader
                         return "Failed to load";
                     case ScriptState.Missing:
                         return "Missing from \\scripts";
+                    // Alongside them because it is also something the runtime
+                    // observed, but it is not a fault: the host has read this
+                    // script and is holding it until the game has a session for
+                    // it to act on. Saying so is what stops "nothing happened
+                    // at the menu" reading as "this script is broken".
+                    case ScriptState.Waiting:
+                        return "Waiting for a playable session";
                     default:
                         break;
                 }
@@ -132,8 +139,21 @@ namespace CraneLoader
                 {
                     ScriptConflict conflict = _entry.Conflict;
                     string rival = conflict.Rival;
+                    /*
+                     * "Incompatible with X" rather than "Does nothing while X
+                     * is on" (user, 2026-08-21). Both are true of a script
+                     * whose every claim the rival holds, but they answer
+                     * different questions: the old line described the symptom,
+                     * and the reader has to work back from it to the decision.
+                     * This one states the relationship, which is what the row
+                     * is for -- the detail pane still says exactly what happens
+                     * and offers the button that changes it.
+                     *
+                     * Shorter matters here too. This line ellipsizes in a narrow
+                     * list, and the rival's name is the part that must survive.
+                     */
                     if (conflict.Silenced)
-                        return "Does nothing while " + rival + " is on";
+                        return "Incompatible with " + rival;
                     if (conflict.Covered)
                         return rival + " has it; " + conflict.Fallback;
                     return string.Format(CultureInfo.InvariantCulture,
@@ -181,7 +201,8 @@ namespace CraneLoader
             {
                 return _entry.State == ScriptState.Loaded ||
                        _entry.State == ScriptState.Failed ||
-                       _entry.State == ScriptState.Missing;
+                       _entry.State == ScriptState.Missing ||
+                       _entry.State == ScriptState.Waiting;
             }
         }
 

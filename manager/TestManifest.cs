@@ -281,7 +281,8 @@ internal static class TestManifest
                 "\n    { \"file\": \"quick_hands.lua\", \"state\": \"failed\", \"error\":" +
                 " \"quick_hands.lua:47: attempt to call a nil value (field \\\"claim\\\")\\nstack traceback:\" }," +
                 "\n    { \"file\": \"godmode.lua\", \"state\": \"disabled\", \"error\": \"\" }," +
-                "\n    { \"file\": \"gone.lua\", \"state\": \"missing\", \"error\": \"not found in scripts\\\\\" }" +
+                "\n    { \"file\": \"gone.lua\", \"state\": \"missing\", \"error\": \"not found in scripts\\\\\" }," +
+                "\n    { \"file\": \"reflex.lua\", \"state\": \"waiting\", \"error\": \"\" }" +
                 "\n  ]\n}\n");
 
             StatusReport report = StatusFile.Read(dir);
@@ -293,6 +294,12 @@ internal static class TestManifest
                 Check(report.StateOf("quick_hands.lua") == ScriptState.Failed, "failed state");
                 Check(report.StateOf("godmode.lua") == ScriptState.Disabled, "disabled state");
                 Check(report.StateOf("gone.lua") == ScriptState.Missing, "missing state");
+                // "waiting" must not read as Unknown. An older manager
+                // does read it that way and shows a blank row, which is
+                // degraded rather than wrong, but this one has to tell a
+                // script held for a session from one the host has not
+                // mentioned.
+                Check(report.StateOf("reflex.lua") == ScriptState.Waiting, "waiting state");
                 // Unknown must be distinguishable from disabled: one means Crane
                 // had nothing to say, the other means it skipped the script.
                 Check(report.StateOf("never_heard_of.lua") == ScriptState.Unknown,
@@ -1003,6 +1010,176 @@ internal static class TestManifest
                   "the winning row does not, so one problem shows one warning");
 
             Directory.Delete(dir, true);
+        }
+
+        /*
+         * ---- the load order ----
+         *
+         * The list shows load order, and a row can be dragged to change it. The
+         * gesture cannot be tested here; the arithmetic behind it can, and the
+         * arithmetic is where the off-by-one lives: a target below the moving
+         * row is one place too far once that row has been taken out.
+         */
+        Console.WriteLine();
+        Console.WriteLine("load order");
+        {
+            List<ScriptEntry> order = new List<ScriptEntry>();
+            order.Add(NewEntry("a.lua", true));
+            order.Add(NewEntry("b.lua", true));
+            order.Add(NewEntry("c.lua", true));
+            order.Add(NewEntry("d.lua", true));
+            ScriptEntry a = order[0], b = order[1], c = order[2], d = order[3];
+
+            // Downwards. Dropping `a` on the lower edge of `c` is target 3, and
+            // the answer is a-out, insert-at-2: b, c, a, d. Target 3 taken
+            // literally would give b, c, d, a, one row too far.
+            Check(LoadOrder.Move(order, a, 3), "a move downwards is a change");
+            Check(order[0] == b && order[1] == c && order[2] == a && order[3] == d,
+                  "dropping below lands under the row that was targeted, not past it");
+
+            // Upwards needs no adjustment: nothing before the target has moved.
+            Check(LoadOrder.Move(order, a, 0), "a move upwards is a change");
+            Check(order[0] == a && order[1] == b && order[2] == c && order[3] == d,
+                  "dropping above lands where the line was drawn");
+
+            // The two no-ops. One pixel of mouse movement separates them, and
+            // both leave the manifest alone.
+            Check(!LoadOrder.Move(order, b, 1), "dropping a row on its own top edge changes nothing");
+            Check(!LoadOrder.Move(order, b, 2), "dropping a row on its own bottom edge changes nothing");
+            Check(order[1] == b, "and neither one moved it");
+
+            // Past the end: the count is a valid target, meaning "last".
+            Check(LoadOrder.Move(order, a, order.Count), "dropping past the last row is a change");
+            Check(order[3] == a, "and puts the script last in the load order");
+            Check(LoadOrder.PositionOf(order, a) == 3, "the reported position is the new one");
+
+            // Out of range and unknown entries are refused rather than throwing;
+            // both are reachable from a drop resolved against a stale row.
+            Check(!LoadOrder.Move(order, a, order.Count + 1), "a target past the end is refused");
+            Check(!LoadOrder.Move(order, a, -1), "a negative target is refused");
+            Check(!LoadOrder.Move(order, NewEntry("gone.lua", true), 0),
+                  "moving an entry the list does not hold is refused");
+            Check(order.Count == 4, "and no refusal changed the list");
+
+            // What the buttons ask for, in the pre-removal form MoveSelected
+            // hands over: one step later is target index+2, one step earlier is
+            // target index-1.
+            List<ScriptEntry> steps = new List<ScriptEntry>();
+            steps.Add(NewEntry("a.lua", true));
+            steps.Add(NewEntry("b.lua", true));
+            steps.Add(NewEntry("c.lua", true));
+            ScriptEntry first = steps[0];
+            Check(LoadOrder.Move(steps, first, 2) && steps[1] == first,
+                  "Load later moves the script exactly one place");
+            Check(LoadOrder.Move(steps, first, 0) && steps[0] == first,
+                  "Load earlier moves it exactly one place back");
+        }
+
+        /*
+         * ---- enabled above disabled ----
+         *
+         * The list keeps every enabled script above every disabled one, and the
+         * tick maintains it: enabling puts a script at the back of the enabled
+         * run, disabling puts it at the front of the disabled one.
+         *
+         * The second half is the one easy to omit. An enable-only rule looks
+         * correct while the list is built up, and breaks the first time a script
+         * in the middle is switched off.
+         */
+        Console.WriteLine();
+        Console.WriteLine("enabled above disabled");
+        {
+            List<ScriptEntry> list = new List<ScriptEntry>();
+            list.Add(NewEntry("a.lua", true));
+            list.Add(NewEntry("b.lua", true));
+            list.Add(NewEntry("c.lua", false));
+            list.Add(NewEntry("d.lua", false));
+            ScriptEntry a = list[0], b = list[1], c = list[2], d = list[3];
+
+            Check(LoadOrder.EnabledCount(list) == 2, "the enabled run is counted");
+            Check(LoadOrder.Boundary(list, null) == 2, "and the boundary sits just past it");
+
+            /*
+             * Count and boundary are different numbers, and the manager needs
+             * the boundary wherever it needs an index. They agree only while the
+             * enabled entries start at the top; a manifest with disabled scripts
+             * above the run made the detail pane report a position past its own
+             * total.
+             */
+            {
+                List<ScriptEntry> offset = new List<ScriptEntry>();
+                offset.Add(NewEntry("off1.lua", false));
+                offset.Add(NewEntry("off2.lua", false));
+                offset.Add(NewEntry("on1.lua", true));
+                offset.Add(NewEntry("on2.lua", true));
+                Check(LoadOrder.EnabledCount(offset) == 2, "two entries are enabled");
+                Check(LoadOrder.Boundary(offset, null) == 4,
+                      "but the run ends at index 4, not index 2");
+                Check(LoadOrder.Boundary(offset, null) - 1 == 3,
+                      "so the last orderable position is the last enabled entry");
+                ScriptEntry moved = offset[2];
+                Check(LoadOrder.Move(offset, moved, LoadOrder.Boundary(offset, null)),
+                      "dropping past the run is a change");
+                Check(offset[3] == moved, "and lands last among the enabled");
+            }
+
+            // Enabling the last script moves it to the back of the enabled run
+            // rather than leaving it below an already-disabled one.
+            d.Enabled = true;
+            Check(LoadOrder.Regroup(list, d), "enabling a script below the run moves it");
+            Check(list[0] == a && list[1] == b && list[2] == d && list[3] == c,
+                  "a newly enabled script lands last among the enabled");
+
+            // Disabling from the middle pushes the script down, or the
+            // arrangement lasts one action.
+            a.Enabled = false;
+            Check(LoadOrder.Regroup(list, a), "disabling from inside the run moves it");
+            Check(list[0] == b && list[1] == d && list[2] == a && list[3] == c,
+                  "a newly disabled script lands first among the disabled");
+
+            // Already in the right place: no move, and so no manifest write.
+            Check(!LoadOrder.Regroup(list, b), "an enabled script already in the run stays put");
+            Check(!LoadOrder.Regroup(list, c), "and a disabled script already below it stays put");
+
+            // An enabled script partway up the run is where it belongs. Moving
+            // it to the back would reorder a list the user had arranged, as a
+            // side effect of a tick elsewhere.
+            List<ScriptEntry> run = new List<ScriptEntry>();
+            run.Add(NewEntry("p.lua", true));
+            run.Add(NewEntry("q.lua", true));
+            run.Add(NewEntry("r.lua", true));
+            ScriptEntry q = run[1];
+            Check(!LoadOrder.Regroup(run, q), "a script in the middle of the run is not hoisted");
+            Check(run[1] == q, "and does not move");
+
+            /*
+             * A hand-edited manifest can interleave them, and Regroup does not
+             * sort: it moves the one entry whose tick changed and leaves the
+             * rest alone. Boundary reads the list as it is, which is why it
+             * scans for the last enabled entry rather than counting.
+             */
+            List<ScriptEntry> messy = new List<ScriptEntry>();
+            messy.Add(NewEntry("on1.lua", true));
+            messy.Add(NewEntry("off1.lua", false));
+            messy.Add(NewEntry("on2.lua", true));
+            Check(LoadOrder.Boundary(messy, null) == 3,
+                  "the boundary follows the last enabled entry, not the first gap");
+            ScriptEntry stray = messy[1];
+            stray.Enabled = true;
+            Check(!LoadOrder.Regroup(messy, stray),
+                  "ticking the interleaved entry needs no move: the run is now unbroken");
+            Check(messy[1] == stray, "and it stayed where it was");
+
+            // Nothing enabled: the boundary is the top, so the first script
+            // ticked becomes the first to load.
+            List<ScriptEntry> none = new List<ScriptEntry>();
+            none.Add(NewEntry("x.lua", false));
+            none.Add(NewEntry("y.lua", false));
+            Check(LoadOrder.Boundary(none, null) == 0, "with nothing enabled the boundary is the top");
+            ScriptEntry y = none[1];
+            y.Enabled = true;
+            Check(LoadOrder.Regroup(none, y) && none[0] == y,
+                  "the first script enabled goes to the top");
         }
 
         // ---- the phantom-row invariant ----

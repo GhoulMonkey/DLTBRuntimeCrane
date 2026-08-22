@@ -15,6 +15,8 @@ using System.IO;
 using System.Windows;
 using System.Globalization;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace CraneLoader
@@ -302,6 +304,7 @@ namespace CraneLoader
                 rows.Add(new ScriptRow(entry, OnRowToggled, false));
             }
 
+            List<ScriptRow> unlisted = new List<ScriptRow>();
             foreach (string file in UnlistedScripts())
             {
                 ScriptEntry entry = new ScriptEntry();
@@ -317,31 +320,36 @@ namespace CraneLoader
                 entry.Declared = declared;
                 entry.Claims = claims;
                 entry.State = ScriptState.Unknown;
-                rows.Add(new ScriptRow(entry, OnUnlistedToggled, true));
+                unlisted.Add(new ScriptRow(entry, OnUnlistedToggled, true));
             }
 
             /*
-             * Alphabetical, listed and unlisted together in one sequence.
+             * Listed scripts stay in manifest order -- which is load order --
+             * and the unlisted ones follow, sorted among themselves.
              *
-             * The list used to be in manifest order with the unlisted scripts
-             * appended, which meant a script's position encoded two things at
-             * once -- where to find it, and who wins a lease -- and served
-             * neither. Finding one took a scan of the whole list, because
-             * manifest order is arrival order and arrival order is meaningless
-             * to the reader; and the precedence it did encode was invisible
-             * anyway, since nothing on screen said what being third rather than
-             * fourth bought you.
+             * 2.3.0 sorted the whole list alphabetically, on the argument that a
+             * script's position encoded two things at once and served neither, so
+             * finding a script by name should win. Load order is what the user can
+             * change here, and it decides which of two scripts gets a contested
+             * lease, so a list that does not show it leaves the manager stating the
+             * order in prose instead: "loads 4 of 9, but not where you see it".
              *
-             * Precedence has not been given up, it has been moved somewhere it
-             * can be seen: the manifest still decides who wins, the amber dot
-             * says when that matters, and the detail pane names the rival and
-             * offers the one button that changes the outcome. Position in this
-             * list is now purely a way to find a script by name.
+             * Position means load order again, and it is editable in place: drag a
+             * row, or use the detail pane's two buttons.
              *
-             * Ordinal-insensitive rather than culture-aware, so the list does not
-             * reshuffle itself on a machine with a different locale.
+             * The unlisted tail is sorted because those scripts genuinely have no
+             * order: they are not in the manifest, so there is no arrival order
+             * to preserve and nothing a position could mean. Ordinal-insensitive
+             * rather than culture-aware, so it does not reshuffle itself on a
+             * machine with a different locale.
+             *
+             * Only the tail is sorted, and it is sorted separately rather than
+             * by a comparer that returns 0 for two listed rows: List.Sort is
+             * introsort and is not stable, so "compares equal" would leave the
+             * load order to the sort's partitioning, differently on each
+             * rebuild.
              */
-            rows.Sort(delegate(ScriptRow left, ScriptRow right)
+            unlisted.Sort(delegate(ScriptRow left, ScriptRow right)
             {
                 int byName = string.Compare(left.Name, right.Name,
                                             StringComparison.OrdinalIgnoreCase);
@@ -353,6 +361,7 @@ namespace CraneLoader
                     ? byName
                     : string.Compare(left.File, right.File, StringComparison.OrdinalIgnoreCase);
             });
+            rows.AddRange(unlisted);
 
             // Keep the selection across a rebuild. Ticking a script rebuilds the
             // list, and losing the detail pane at that moment is disorienting --
@@ -481,8 +490,41 @@ namespace CraneLoader
             return unlisted;
         }
 
+        /*
+         * A tick moves the row to the near side of the enabled/disabled
+         * boundary, so the list always reads enabled-first.
+         *
+         * Newly enabled means "loads last", which is the conservative default:
+         * everything already running keeps the leases it holds, and the new
+         * script is the one refused if it collides. The alternative -- leave it
+         * where it sat while disabled -- silently promotes a script above
+         * working ones on the strength of where it happened to be in a file.
+         *
+         * The move happens before Save so the manifest and the list agree, and it
+         * forces a full rebuild rather than the in-place refresh below, because the
+         * row changes position and RefreshConflicts cannot express that.
+         */
         private void OnRowToggled(ScriptRow row)
         {
+            if (LoadOrder.Regroup(_entries, row.Entry))
+            {
+                Save();
+                BuildRows();
+                // Follow the row that moved. It jumped several places under the
+                // cursor, and a selection left behind on whatever slid into its
+                // old slot would look like the click landed on the wrong script.
+                foreach (object item in (System.Collections.IEnumerable)ScriptList.ItemsSource)
+                {
+                    ScriptRow candidate = item as ScriptRow;
+                    if (candidate != null && ReferenceEquals(candidate.Entry, row.Entry))
+                    {
+                        ScriptList.SelectedItem = candidate;
+                        break;
+                    }
+                }
+                UpdateSummary();
+                return;
+            }
             Save();
             /*
              * Ticking one script changes what every other script gets.
@@ -525,10 +567,16 @@ namespace CraneLoader
 
         // Ticking an unlisted script is how it joins the list. The file turning
         // up in the folder is not enough on its own.
+        /*
+         * An unlisted script joins the manifest at the end of the enabled run,
+         * not at the end of the file, which is where OnRowToggled puts a script
+         * that was already listed. "Tick it and it loads last" has to mean the same
+         * thing however the script got here.
+         */
         private void OnUnlistedToggled(ScriptRow row)
         {
             if (!row.Enabled) return;
-            _entries.Add(row.Entry);
+            _entries.Insert(LoadOrder.Boundary(_entries, null), row.Entry);
             Save();
             BuildRows();
             UpdateSummary();
@@ -776,15 +824,21 @@ namespace CraneLoader
         private void MoveSelected(int delta)
         {
             ScriptRow row = ScriptList.SelectedItem as ScriptRow;
-            if (row == null || row.Unlisted) return;
+            if (row == null || !Draggable(row)) return;
+            // Boundary, not EnabledCount: this compares against an index. See
+            // the note on EnabledCount in LoadOrder.cs.
+            if (delta > 0 && _entries.IndexOf(row.Entry) >= LoadOrder.Boundary(_entries, null) - 1)
+                return;
             int from = _entries.IndexOf(row.Entry);
             if (from < 0) return;
             int to = from + delta;
             if (to < 0 || to >= _entries.Count) return;
 
-            ScriptEntry moved = _entries[from];
-            _entries.RemoveAt(from);
-            _entries.Insert(to, moved);
+            ScriptEntry moved = row.Entry;
+            // Through LoadOrder, same as the drag. `to` here is a final position
+            // rather than a pre-removal target, and for a one-step move the two
+            // differ only when stepping down -- so hand it the pre-removal form.
+            if (!LoadOrder.Move(_entries, moved, delta > 0 ? to + 1 : to)) return;
             Save();
             BuildRows();
 
@@ -801,6 +855,474 @@ namespace CraneLoader
                 }
             }
             UpdateSummary();
+        }
+
+        /* ---------------------------------------------------------------- */
+        /* Dragging a row to change the load order                           */
+        /* ---------------------------------------------------------------- */
+
+        /*
+         * The list is the load order, so the direct way to change the load order
+         * is to move a row. The Load earlier / Load later buttons stay, because
+         * a drag is a mouse-only gesture and reordering must not become
+         * mouse-only with it.
+         *
+         * Three things this refuses to do:
+         *
+         *   - drag an unlisted script. It has no manifest position, and giving
+         *     it one by dropping it would write it into the manifest as a side
+         *     effect of a gesture that says nothing about being enabled. Same
+         *     reasoning as MoveSelected above.
+         *   - start a drag from the checkbox. The tick is the most-used control
+         *     on the row; a drag that begins there would swallow clicks that
+         *     were meant to enable a script.
+         *   - reorder anything on a drop that changes nothing. A no-op that
+         *     still says "moved" and still writes the manifest teaches the user
+         *     that the readout is not to be trusted.
+         */
+        private Point _dragOrigin;
+        private ScriptRow _dragCandidate;
+        private DropLineAdorner _dropLine;
+        private ListBoxItem _dropLineRow;
+        private bool _dropLineBelow;
+        private DragChipAdorner _dragChip;
+
+        private void OnScriptListMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _dragCandidate = null;
+            DependencyObject source = e.OriginalSource as DependencyObject;
+            if (Ancestor<CheckBox>(source) != null) return;
+            ListBoxItem item = Ancestor<ListBoxItem>(source);
+            if (item == null) return;
+            ScriptRow row = item.DataContext as ScriptRow;
+            if (row == null || !Draggable(row)) return;
+            _dragOrigin = e.GetPosition(null);
+            _dragCandidate = row;
+        }
+
+        private void OnScriptListMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_dragCandidate == null) return;
+            if (e.LeftButton != MouseButtonState.Pressed) { _dragCandidate = null; return; }
+
+            // The system drag threshold, not a number of our own: below it the
+            // gesture is still a click, and a list whose rows detach on a
+            // one-pixel wobble is unusable for selecting.
+            Point now = e.GetPosition(null);
+            if (Math.Abs(now.X - _dragOrigin.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(now.Y - _dragOrigin.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            ScriptRow dragging = _dragCandidate;
+            _dragCandidate = null;
+            try
+            {
+                DragDrop.DoDragDrop(ScriptList, dragging, DragDropEffects.Move);
+            }
+            finally
+            {
+                // DoDragDrop blocks until the drop resolves, and the adorners must
+                // go whichever way it ended -- dropped, cancelled with Escape, or
+                // released outside the window.
+                ClearDragVisuals();
+            }
+        }
+
+        /*
+         * Left unhandled unless the payload is one of our own rows.
+         *
+         * Drop and DragOver bubble, and the window above this list already
+         * handles them: dropping a .lua file onto the list is how a script is
+         * added. Marking every drag handled here would have removed that, and the
+         * list is the obvious place to drop a script.
+         */
+        private void OnScriptListDragOver(object sender, DragEventArgs e)
+        {
+            int to;
+            ScriptRow dragged = e.Data.GetData(typeof(ScriptRow)) as ScriptRow;
+            if (dragged == null) return;
+            ShowDragChip(dragged.Name, e.GetPosition(ScriptList));
+            e.Effects = DropIndex(e, dragged, out to)
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        /*
+         * There is no edge auto-scroll here.
+         *
+         * dev.3 had one and it made the list unusable: dragging slammed it to
+         * the top or the bottom and stayed there. Two mistakes compounded.
+         *
+         * The first is a unit error. A ListBox scrolls by item, since its
+         * ScrollViewer has CanContentScroll true, so ViewportHeight,
+         * ExtentHeight and ScrollableHeight are counts of rows, not pixels.
+         * Comparing a pixel Y against `ViewportHeight - 24` compared a
+         * coordinate to a row count: for any list shorter than 24 rows the
+         * threshold is negative, so the "near the bottom edge" test was true
+         * everywhere in the list.
+         *
+         * The second is the event rate. DragOver repeats continuously while the
+         * pointer is inside the drop target, stationary or not, so "one line per
+         * DragOver" is not the nudge the old comment claimed -- it is as many
+         * lines as the machine can raise events, which scrolls the whole list.
+         *
+         * It survived the offline check because it is inert wherever it is
+         * harmless: with every row visible ScrollableHeight is zero and LineDown
+         * does nothing, so a list that fits its window shows no symptom. The list
+         * it was checked against fit; the one it shipped to did not.
+         *
+         * Reordering across a list taller than the window is done with Load
+         * earlier / Load later, or by dropping at the visible edge and dragging
+         * again. If that becomes the common case, an auto-scroll belongs here --
+         * measured in pixels off ActualHeight, rate-limited, and checked against
+         * a list long enough to actually scroll.
+         */
+
+        private void OnScriptListDragLeave(object sender, DragEventArgs e)
+        {
+            // Both go, including the chip: it is anchored to the list, so it
+            // would otherwise sit frozen at the edge while the pointer is over
+            // the detail pane. DragOver puts it back if the pointer returns.
+            ClearDragVisuals();
+        }
+
+        private void OnScriptListDrop(object sender, DragEventArgs e)
+        {
+            ClearDragVisuals();
+            ScriptRow dragged = e.Data.GetData(typeof(ScriptRow)) as ScriptRow;
+            // Not ours: let it bubble to the window, which adds dropped .lua
+            // files. See OnScriptListDragOver.
+            if (dragged == null) return;
+            e.Handled = true;
+            if (!Ready()) return;
+
+            int to;
+            if (!DropIndex(e, dragged, out to)) return;
+            ScriptEntry moved = dragged.Entry;
+            // LoadOrder owns the arithmetic, including refusing the two targets
+            // that mean "leave it where it is". See LoadOrder.cs.
+            if (!LoadOrder.Move(_entries, moved, to)) return;
+            Save();
+            BuildRows();
+
+            foreach (object item in (System.Collections.IEnumerable)ScriptList.ItemsSource)
+            {
+                ScriptRow candidate = item as ScriptRow;
+                if (candidate != null && ReferenceEquals(candidate.Entry, moved))
+                {
+                    ScriptList.SelectedItem = candidate;
+                    break;
+                }
+            }
+            UpdateSummary();
+            StatusText.Text = string.Format(CultureInfo.InvariantCulture,
+                                            "{0} now loads {1} of {2}.",
+                                            moved.Name,
+                                            LoadOrder.PositionOf(_entries, moved) + 1,
+                                            _entries.Count);
+        }
+
+        /*
+         * Where the pointer says the row should go, as an index into _entries,
+         * and the insertion line that says so on screen.
+         *
+         * The index is resolved through the row under the pointer rather than
+         * from its position in the list, because the list hides entries whose
+         * file has gone missing -- so list position and manifest position are
+         * not the same number, and only the manifest one can be inserted into.
+         *
+         * Returns false when there is nowhere valid to drop, which is what makes
+         * the cursor show a refusal rather than a silent no-op on release.
+         */
+        /*
+         * Only an enabled, listed script drags.
+         *
+         * An unlisted one has no manifest position to change. A disabled one has
+         * a position, but not a meaningful one: load order decides who wins a
+         * contested lease, and a script that is switched off claims nothing at
+         * all. Dragging it into the middle of the enabled run would place a row
+         * whose position carries no meaning among rows whose position does, and
+         * undo the arrangement a tick maintains.
+         */
+        private static bool Draggable(ScriptRow row)
+        {
+            return row != null && !row.Unlisted && row.Entry.Enabled;
+        }
+
+        private bool DropIndex(DragEventArgs e, ScriptRow dragged, out int to)
+        {
+            to = -1;
+            if (!Draggable(dragged)) return false;
+
+            // The floor of the disabled block, as an index into _entries. Not
+            // the number of enabled entries, which is the same only when the run
+            // starts at the top. See LoadOrder.EnabledCount.
+            int limit = LoadOrder.Boundary(_entries, null);
+
+            ListBoxItem row = Ancestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+            ScriptRow over = row == null ? null : row.DataContext as ScriptRow;
+
+            /*
+             * Below the enabled run -- over a disabled row, over the unlisted
+             * tail, or past the last row entirely -- the drop means "last among
+             * the enabled". Clamped rather than refused: "drag it to the bottom"
+             * is the obvious way to ask for exactly that, and a cursor that
+             * simply says no leaves the user guessing which part of the list is
+             * a valid target.
+             */
+            if (over == null || over.Unlisted || !over.Entry.Enabled)
+            {
+                to = limit;
+                ShowDropLine(LastEnabledRow(), true);
+                return true;
+            }
+
+            // Upper half inserts above the row under the pointer, lower half
+            // below it. Anything else makes the line jump a row away from where
+            // the pointer is, which reads as a bug.
+            bool below = e.GetPosition(row).Y > row.ActualHeight / 2;
+            ShowDropLine(row, below);
+            to = _entries.IndexOf(over.Entry);
+            if (to < 0) return false;
+            if (below) to++;
+            return true;
+        }
+
+        /* The container of the last enabled row, so the clamped drop can draw
+           its line on a real row rather than nowhere. Null when nothing is
+           enabled, which is a list with no valid drag in it anyway. */
+        private ListBoxItem LastEnabledRow()
+        {
+            ListBoxItem last = null;
+            System.Collections.IEnumerable rows = ScriptList.ItemsSource as System.Collections.IEnumerable;
+            if (rows == null) return null;
+            foreach (object item in rows)
+            {
+                ScriptRow row = item as ScriptRow;
+                if (row == null || row.Unlisted || !row.Entry.Enabled) continue;
+                ListBoxItem container =
+                    ScriptList.ItemContainerGenerator.ContainerFromItem(item) as ListBoxItem;
+                if (container != null) last = container;
+            }
+            return last;
+        }
+
+        private void ShowDropLine(ListBoxItem row, bool below)
+        {
+            // No row to draw on: nothing is enabled, or its container has been
+            // virtualised away. The drop is still valid, so this clears the line
+            // rather than refusing.
+            if (row == null) { ClearDropLine(); return; }
+            if (ReferenceEquals(_dropLineRow, row) && _dropLineBelow == below && _dropLine != null)
+                return;
+            ClearDropLine();
+            AdornerLayer layer = AdornerLayer.GetAdornerLayer(row);
+            if (layer == null) return;
+            _dropLine = new DropLineAdorner(row, below, ThemeBrush("Accent", Brushes.Gray));
+            layer.Add(_dropLine);
+            _dropLineRow = row;
+            _dropLineBelow = below;
+        }
+
+        /*
+         * The name of the script, following the cursor.
+         *
+         * The insertion line says where the row will land; it does not say what
+         * is being moved. Once the pointer has travelled a few rows the row it
+         * started on is no longer under it and no longer obviously the subject,
+         * and on a list of nine similar-looking entries that is a real question.
+         * Carrying the name answers it without the user having to remember what
+         * they picked up.
+         *
+         * The chip is drawn, not a rendered copy of the row. A ghost of the whole
+         * row would bring its checkbox and its two status dots along, and a
+         * floating checkbox under the cursor invites a click that cannot happen.
+         */
+        private void ShowDragChip(string name, Point at)
+        {
+            if (_dragChip == null)
+            {
+                AdornerLayer layer = AdornerLayer.GetAdornerLayer(ScriptList);
+                if (layer == null) return;
+                _dragChip = new DragChipAdorner(ScriptList, name,
+                                                ThemeBrush("SurfaceRaised", Brushes.White),
+                                                ThemeBrush("RuleStrong", Brushes.Gray),
+                                                ThemeBrush("Ink", Brushes.Black));
+                layer.Add(_dragChip);
+            }
+            _dragChip.MoveTo(at);
+        }
+
+        private void ClearDragVisuals()
+        {
+            ClearDropLine();
+            ClearDragChip();
+        }
+
+        private void ClearDragChip()
+        {
+            if (_dragChip != null)
+            {
+                AdornerLayer layer = AdornerLayer.GetAdornerLayer(ScriptList);
+                if (layer != null) layer.Remove(_dragChip);
+                _dragChip = null;
+            }
+        }
+
+        private static Brush ThemeBrush(string key, Brush fallback)
+        {
+            Brush found = Application.Current != null
+                ? Application.Current.TryFindResource(key) as Brush
+                : null;
+            return found ?? fallback;
+        }
+
+        private void ClearDropLine()
+        {
+            if (_dropLine != null && _dropLineRow != null)
+            {
+                AdornerLayer layer = AdornerLayer.GetAdornerLayer(_dropLineRow);
+                if (layer != null) layer.Remove(_dropLine);
+            }
+            _dropLine = null;
+            _dropLineRow = null;
+        }
+
+        /*
+         * Walks up from whatever the mouse actually hit -- usually a TextBlock
+         * inside the row template -- to the thing being asked about.
+         *
+         * Visual first, logical as the fallback: a hit can land on a run of text
+         * or a content element that is not a Visual, and VisualTreeHelper throws
+         * rather than returning null for those. Same shape as the focus walk in
+         * DetailHasFocus.
+         */
+        private static T Ancestor<T>(DependencyObject from) where T : DependencyObject
+        {
+            while (from != null)
+            {
+                T found = from as T;
+                if (found != null) return found;
+                DependencyObject parent = null;
+                if (from is Visual || from is System.Windows.Media.Media3D.Visual3D)
+                    parent = VisualTreeHelper.GetParent(from);
+                if (parent == null) parent = LogicalTreeHelper.GetParent(from);
+                from = parent;
+            }
+            return null;
+        }
+
+        /*
+         * The insertion line: two pixels of Accent along the edge the row would
+         * be inserted at.
+         *
+         * An adorner rather than a Border added to the template, because it has
+         * to sit on top of a row it is not part of, and it must not participate
+         * in hit testing -- an indicator that intercepts the drop it exists to
+         * describe would be its own bug.
+         */
+        /*
+         * The name chip: a small label that follows the pointer for the length
+         * of the drag.
+         *
+         * FormattedText rather than a hosted TextBlock. An adorner that hosts
+         * real elements has to run its own measure and arrange pass and keep a
+         * VisualCollection in step, which is a lot of machinery for one line of
+         * static text that never wraps, never takes focus and never changes
+         * after it is created.
+         *
+         * The text is measured once in the constructor, because the size decides
+         * where the chip is allowed to sit and that question is asked on every
+         * pointer move.
+         */
+        private sealed class DragChipAdorner : Adorner
+        {
+            private const double PadX = 9;
+            private const double PadY = 5;
+            /* Offset down and right of the pointer, so the chip trails the
+               cursor instead of sitting under it and hiding the insertion line
+               it is meant to accompany. */
+            private const double OffsetX = 16;
+            private const double OffsetY = 10;
+
+            private readonly FormattedText _text;
+            private readonly Brush _fill;
+            private readonly Pen _edge;
+            private readonly Size _size;
+            private Point _at;
+
+            public DragChipAdorner(UIElement adorned, string name,
+                                   Brush fill, Brush edge, Brush ink)
+                : base(adorned)
+            {
+                _fill = fill;
+                _edge = new Pen(edge, 1);
+                _edge.Freeze();
+                // The DPI-aware overload: the one without it is obsolete and
+                // renders at the wrong size on a scaled display, which is most
+                // of them.
+                _text = new FormattedText(
+                    string.IsNullOrEmpty(name) ? "script" : name,
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Segoe UI"),
+                    12,
+                    ink,
+                    VisualTreeHelper.GetDpi(adorned).PixelsPerDip);
+                _size = new Size(_text.Width + PadX * 2, _text.Height + PadY * 2);
+                IsHitTestVisible = false;
+            }
+
+            public void MoveTo(Point at)
+            {
+                _at = at;
+                InvalidateVisual();
+            }
+
+            protected override void OnRender(DrawingContext drawing)
+            {
+                Rect within = new Rect(AdornedElement.RenderSize);
+                double x = _at.X + OffsetX;
+                double y = _at.Y + OffsetY;
+                // Kept inside the list. Near the right edge the chip would
+                // otherwise hang over the detail pane, where it reads as part of
+                // the pane rather than as something being carried.
+                if (x + _size.Width > within.Right) x = _at.X - OffsetX - _size.Width;
+                if (y + _size.Height > within.Bottom) y = within.Bottom - _size.Height;
+                if (x < within.Left) x = within.Left;
+                if (y < within.Top) y = within.Top;
+
+                Rect chip = new Rect(x, y, _size.Width, _size.Height);
+                drawing.PushOpacity(0.95);
+                drawing.DrawRoundedRectangle(_fill, _edge, chip, 3, 3);
+                drawing.DrawText(_text, new Point(x + PadX, y + PadY));
+                drawing.Pop();
+            }
+        }
+
+        private sealed class DropLineAdorner : Adorner
+        {
+            private readonly bool _below;
+            private readonly Pen _pen;
+
+            public DropLineAdorner(UIElement adorned, bool below, Brush brush)
+                : base(adorned)
+            {
+                _below = below;
+                _pen = new Pen(brush, 2);
+                _pen.Freeze();
+                IsHitTestVisible = false;
+            }
+
+            protected override void OnRender(DrawingContext drawing)
+            {
+                Rect area = new Rect(AdornedElement.RenderSize);
+                // Inset by half the stroke so the line lands inside the row
+                // rather than straddling its edge and being clipped in half.
+                double y = _below ? area.Bottom - 1 : area.Top + 1;
+                drawing.DrawLine(_pen, new Point(area.Left, y), new Point(area.Right, y));
+            }
         }
 
         /*
@@ -1391,10 +1913,11 @@ namespace CraneLoader
              * beating it. The alternative -- turn one of them off -- is the
              * checkbox they already have.
              *
-             * This is what the Move up / Move down pair could not do once the
-             * list went alphabetical: those still move a script through the load
-             * order, but the position they move it to is no longer visible, so
-             * "above that one" had to become expressible directly.
+             * It survives the list going back to load order. Dragging and the
+             * two buttons both ask the user to work out where "above the one
+             * beating me" is and then get there; this states the outcome and
+             * lets the manager do the arithmetic, which is still the shortest
+             * route from seeing the amber dot to resolving it.
              */
             if (conflict.Refused && conflict.RivalFile.Length > 0)
             {
@@ -1548,9 +2071,9 @@ namespace CraneLoader
              * after -- and sorting would throw away information the manager
              * cannot recover.
              *
-             * Not the same question as the script list, which IS sorted: there
-             * the order carried no authored meaning, only arrival order, and
-             * sorting it threw away nothing.
+             * The script list is the same question answered the same way: its
+             * order is the load order the user chose, and sorting it threw away
+             * a fact only they could put back.
              *
              * Ungrouped settings keep the plain "Settings" heading and come
              * first, so a script that declares no groups renders exactly as it
@@ -1608,12 +2131,15 @@ namespace CraneLoader
              * The WinForms window had Move up and Move down; the WPF port
              * silently dropped them, and nothing noticed because order is
              * invisible until two scripts want the same thing. They came back,
-             * and then the list went alphabetical -- so the row does not move
-             * when these are pressed, and the wording had to stop implying it
-             * does. They move the script through the LOAD order, which is what
-             * they always actually did; while the list happened to be in that
-             * order too, "Move up" could get away with describing the side
-             * effect instead of the effect.
+             * the list went alphabetical for one release, and now it is the load
+             * order again -- so the row does move when these are pressed.
+             *
+             * The wording stays "Load earlier" / "Load later" rather than
+             * reverting to "Move up". Naming the effect outlasted the list
+             * arrangement that made "up" true, and it will still be true if the
+             * list is ever grouped or filtered; "up" would quietly become a lie
+             * again. These are also the keyboard route to something that is
+             * otherwise a mouse gesture, so they are not decoration.
              *
              * Leases are exclusive per path, so when two enabled scripts claim
              * one path the earlier-loading entry wins and the other is refused.
@@ -1621,18 +2147,27 @@ namespace CraneLoader
              * fighting -- the conflict block above is the direct route and these
              * are the general one.
              */
+            /*
+             * Bounded by the enabled run, exactly as the drag is. These move the
+             * same script through the same list, and a button that can push a
+             * row somewhere a drag refuses to put it would make the arrangement
+             * depend on which control the user reached for.
+             */
+            int at = _entries.IndexOf(entry);
+            int boundary = LoadOrder.Boundary(_entries, null);
+            bool orderable = at >= 0 && entry.Enabled && !row.Unlisted;
+
             Button up = new Button();
             up.Content = "Load earlier";
             up.Padding = new Thickness(12, 4, 12, 4);
-            up.IsEnabled = _entries.IndexOf(entry) > 0;
+            up.IsEnabled = orderable && at > 0;
             up.Click += delegate { MoveSelected(-1); };
 
             Button down = new Button();
             down.Content = "Load later";
             down.Padding = new Thickness(12, 4, 12, 4);
             down.Margin = new Thickness(8, 0, 0, 0);
-            int at = _entries.IndexOf(entry);
-            down.IsEnabled = at >= 0 && at < _entries.Count - 1;
+            down.IsEnabled = orderable && at < boundary - 1;
             down.Click += delegate { MoveSelected(1); };
 
             StackPanel order = new StackPanel();
@@ -1644,22 +2179,37 @@ namespace CraneLoader
             Detail.Children.Add(order);
 
             /*
-             * An unlisted script has no manifest position to state. It gets a
-             * place in the load order by being ticked, and quoting a number for
-             * it -- or worse, IndexOf's -1 rendered as "loads 0 of 9" -- would
-             * be inventing a fact about a file the manifest has never seen.
+             * No "Loads 4 of 9" line here any more (user, 2026-08-21).
+             *
+             * It existed to state a position the list could not show, back when
+             * the list was alphabetical. The list is the load order again, so the
+             * row's own place in it says the same thing better, and the line was
+             * restating the screen.
+             *
+             * It was also wrong, and wrong in the way that made the redundancy
+             * worth removing rather than repairing: it printed "Loads 8 of 6",
+             * because the position was an index into the manifest and the total
+             * was a count of enabled entries. Those agree only while the enabled
+             * run starts at the top, and a manifest carried over from an earlier
+             * version had two disabled scripts above it. The index arithmetic is
+             * fixed either way -- see LoadOrder.EnabledCount -- but a number that
+             * duplicates what the reader can already see is a number that can
+             * only be right or embarrassing, and never useful.
+             *
+             * The unlisted and disabled cases keep a line, because those DO say
+             * something the list does not: what ticking the script will do.
              */
-            Detail.Children.Add(Muted(row.Unlisted
-                ? "Not in the load order yet. Ticking this script puts it at the " +
-                  "end, where it claims last. Order decides who wins: if two " +
-                  "enabled scripts claim the same thing, the one that loads first " +
-                  "gets it and the other is refused."
-                : string.Format(CultureInfo.InvariantCulture,
-                    "Loads {0} of {1}. The list is alphabetical, so this is not the " +
-                    "position shown on the left. Order decides who wins: if two " +
-                    "enabled scripts claim the same thing, the one that loads first " +
-                    "gets it and the other is refused.",
-                    _entries.IndexOf(entry) + 1, _entries.Count)));
+            if (row.Unlisted)
+                Detail.Children.Add(Muted(
+                    "Not in the load order yet. Ticking this script puts it last " +
+                    "among the enabled ones, where it claims after all of them. " +
+                    "Order decides who wins: if two enabled scripts claim the same " +
+                    "thing, the one that loads first gets it and the other is refused."));
+            else if (!entry.Enabled)
+                Detail.Children.Add(Muted(
+                    "Switched off, so it has no place in the load order and claims " +
+                    "nothing. Ticking it puts it last among the enabled scripts, " +
+                    "where it claims after every one of them."));
 
             StackPanel actions = new StackPanel();
             actions.Orientation = Orientation.Horizontal;
