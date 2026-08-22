@@ -41,9 +41,8 @@ modifier the scripts hold, and the Bridge restores the values it recorded.
 
 ## Downloads
 
-You can download the latest release from here: <https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest>
-
-Also on Nexus Mods, at <https://www.nexusmods.com/dyinglightthebeast/mods/973>.
+GitHub is where CRANE is distributed. Download the latest release from
+<https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest>.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
