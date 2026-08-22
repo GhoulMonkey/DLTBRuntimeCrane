@@ -13,6 +13,35 @@ changed.
 Scripts cannot change game state at all until `AllowWrites=1` is set. The
 shipped default is read-only.
 
+## CraneLoader
+
+`CraneLoader.exe` ships alongside the ASI. Scripts are added, enabled, ordered
+and configured there. It reads each script's metadata header and builds the
+settings from it, so a script does not need a UI or a configuration parser of
+its own.
+
+![The CraneLoader window. Installed scripts are listed on the left under Bridge
+clients and Crane scripts. The settings for the selected script fill the panel
+on the right.](docs/images/craneloader.png)
+
+Native Bridge clients appear in the same list, so one window covers the Lua
+scripts CRANE runs and the compiled mods loaded through the Bridge. Those mods
+keep their own `.ini` files and the manager edits them in place. The capsule at
+the top right reports whether the game is running, and edits to scripts and
+settings are picked up without restarting it.
+
+Settings holds CRANE's own keys and the Bridge's, read from and written back to
+the same `.ini` files both already use.
+
+![The CraneLoader settings window. The Crane section holds the Allow scripts to
+change the game switch, with the DLTBRuntimeBridge section
+below.](docs/images/craneloader-settings.png)
+
+**Allow scripts to change the game** is `AllowWrites` in
+`DLTBRuntimeCrane.ini`, and the shipped default is off. With it off, scripts may
+only read. Switching it off while the game is running releases every lease and
+modifier the scripts hold, and the Bridge restores the values it recorded.
+
 ## Downloads
 
 You can download the latest release from here: <https://github.com/GhoulMonkey/DLTBRuntimeCrane/releases/latest>
